@@ -90,6 +90,36 @@ var _ = Describe("Firewall", func() {
 
 	})
 
+	It("Add One Way connection", func() {
+		chain1 = NewAccessChain("AOS_TEST_SERVICE1", "0000-0000-0000-0000", iconf1.Address, iconf1.Gateway, true)
+		chain1.AddOutRule("1111-1111-1111-1111", "9000", "tcp")
+
+		chain2 = NewAccessChain("AOS_TEST_SERVICE2", "1111-1111-1111-1111", iconf2.Address, iconf2.Gateway, true)
+		chain2.AddInRule("9000", "tcp")
+
+		err = fw.Add(chain2)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = fw.Check(chain1)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = fw.Add(chain1)
+		Expect(err).NotTo(HaveOccurred())
+
+		rules, err := listFilterRules(chain2.Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(rules).To(Equal([]string{
+			"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
+			"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p udp -m udp -j ACCEPT",
+			"-A AOS_TEST_SERVICE2 -s 10.0.0.2/32 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
+			"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j RETURN",
+			"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p udp -m udp -j RETURN",
+			"-A AOS_TEST_SERVICE2 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP",
+			"-A AOS_TEST_SERVICE2 -p udp -m udp -j DROP",
+		}))
+	})
+
 	Describe("Test Iptables Rules", func() {
 		It("Add Chain1", func() {
 			err = fw.Add(chain1)

@@ -194,8 +194,8 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 
 	for _, dchain := range f.chainMap {
 		for _, outrule := range dchain.OutRules {
-			if outrule.DestContainerID == c.ContainerID {
-				if err = f.update(dchain); err != nil {
+			if chain, ok := f.chainMap[outrule.DestContainerID]; ok {
+				if err = f.update(chain); err != nil {
 					return err
 				}
 			}
