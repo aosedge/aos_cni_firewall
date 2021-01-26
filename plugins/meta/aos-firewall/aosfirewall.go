@@ -133,12 +133,7 @@ func cmdDel(args *skel.CmdArgs) (err error) {
 		return err
 	}
 
-	cn, err := getAccessChainFromConfig(conf)
-	if err != nil {
-		return err
-	}
-
-	return fw.Del(cn)
+	return fw.Del(conf.UUID)
 }
 
 func cmdCheck(args *skel.CmdArgs) (err error) {

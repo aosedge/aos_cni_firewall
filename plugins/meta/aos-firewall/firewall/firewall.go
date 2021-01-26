@@ -214,7 +214,7 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 }
 
 // Del deletes user defined chain to the firewall
-func (f *Firewall) Del(c *AccessChain) (err error) {
+func (f *Firewall) Del(containerID string) (err error) {
 	if err = f.runtimeConfig.Lock(); err != nil {
 		return err
 	}
@@ -229,11 +229,9 @@ func (f *Firewall) Del(c *AccessChain) (err error) {
 		return nil
 	}
 
-	delete(f.chainMap, c.ContainerID)
-
 	for _, dchain := range f.chainMap {
 		for _, outrule := range dchain.OutRules {
-			if outrule.DestContainerID == c.ContainerID {
+			if outrule.DestContainerID == containerID {
 				if err = f.update(dchain); err != nil {
 					return err
 				}
@@ -253,6 +251,8 @@ func (f *Firewall) Del(c *AccessChain) (err error) {
 		action: tableDelete, chain: outputChainName, src: c.Address.IP.String(), protocol: "icmp", jump: "DROP"})
 
 	f.iptables.DeleteChain("filter", c.Name)
+
+	delete(f.chainMap, containerID)
 
 	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
 		return err

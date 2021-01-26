@@ -181,7 +181,7 @@ var _ = Describe("Firewall", func() {
 		})
 
 		It("Delete Chain1", func() {
-			err = fw.Del(chain1)
+			err = fw.Del(chain1.ContainerID)
 			Expect(err).NotTo(HaveOccurred())
 
 			rules, err := listFilterRules(chain1.Name)
@@ -201,7 +201,7 @@ var _ = Describe("Firewall", func() {
 				"-A AOS_TEST_SERVICE2 -p udp -m udp -j DROP",
 			}))
 
-			err = fw.Del(chain2)
+			err = fw.Del(chain2.ContainerID)
 			Expect(err).NotTo(HaveOccurred())
 
 			rules, err = listFilterRules(chain2.Name)
