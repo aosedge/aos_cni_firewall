@@ -23,6 +23,7 @@ import (
 	"net"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
@@ -627,33 +628,34 @@ var _ = Describe("Aos Firewall", func() {
  * Private
  ******************************************************************************/
 
+func execCmd(bin string, args ...string) (err error) {
+	output, err := exec.Command(bin, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("CMD %s, err: %s, output: %s", strings.Join(args, " "), err, string(output))
+	}
+
+	return nil
+}
+
 func createVeth(hostVethIfName string, containerNamespace string, containerVethIfName string, containerIP string) (err error) {
 	contNsName := filepath.Base(containerNamespace)
 
-	cmd := exec.Command("ip", "link", "add", hostVethIfName, "type", "veth", "peer", containerVethIfName, "netns", contNsName)
-
-	err = cmd.Run()
+	err = execCmd("ip", "link", "add", hostVethIfName, "type", "veth", "peer", containerVethIfName, "netns", contNsName)
 	if err != nil {
 		return err
 	}
 
-	cmd = exec.Command("ip", "link", "set", "dev", hostVethIfName, "up")
-
-	err = cmd.Run()
+	err = execCmd("ip", "link", "set", "dev", hostVethIfName, "up")
 	if err != nil {
 		return err
 	}
 
-	cmd = exec.Command("ip", "netns", "exec", contNsName, "ip", "addr", "add", "dev", "veth0", containerIP)
-
-	err = cmd.Run()
+	err = execCmd("ip", "netns", "exec", contNsName, "ip", "addr", "add", "dev", "veth0", containerIP)
 	if err != nil {
 		return err
 	}
 
-	cmd = exec.Command("ip", "netns", "exec", contNsName, "ip", "link", "set", "veth0", "up")
-
-	err = cmd.Run()
+	err = execCmd("ip", "netns", "exec", contNsName, "ip", "link", "set", "veth0", "up")
 	if err != nil {
 		return err
 	}
@@ -674,21 +676,18 @@ func bridgeByName(name string) (br *netlink.Bridge, err error) {
 }
 
 func createBridge(brName string, brIP string, mtu int, promiscMode, vlanFiltering bool) (bridge *netlink.Bridge, err error) {
-	cmd := exec.Command("ip", "link", "add", "name", brName, "type", "bridge")
-
-	if err = cmd.Run(); err != nil {
+	err = execCmd("ip", "link", "add", "name", brName, "type", "bridge")
+	if err != nil {
 		return nil, err
 	}
 
-	cmd = exec.Command("ip", "link", "set", brName, "up")
-
-	if err = cmd.Run(); err != nil {
+	err = execCmd("ip", "link", "set", brName, "up")
+	if err != nil {
 		return nil, err
 	}
 
-	cmd = exec.Command("ip", "addr", "add", "dev", brName, brIP)
-
-	if err = cmd.Run(); err != nil {
+	err = execCmd("ip", "addr", "add", "dev", brName, brIP)
+	if err != nil {
 		return nil, err
 	}
 
@@ -990,7 +989,7 @@ func traceroute(daddr string, sport, dport string, prot string) (err error) {
 	cmd.Stderr = &stderr
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
-		return err
+		return fmt.Errorf("traceroute failed. args: %s err: %s", strings.Join(args, " "), err)
 	}
 
 	if bytes.Contains(stdout.Bytes(), []byte("*")) {
