@@ -67,7 +67,7 @@ type AccessChain struct {
 	// for tcp protocol, up to 15 ports can be specified
 	InputPortsTCP []string `json:"inputPortsTCP"`
 	// HasInternetConnection specifies if container has outgoing permissions the network
-	DroppedInternetConnection bool `json:"hasInternetConnection"`
+	HasInternetConnection bool `json:"hasInternetConnection"`
 }
 
 // AccessRule contains parameters to configure one rule for a single container
@@ -376,7 +376,7 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		{chain: outputChainName, src: chain.Address.IP.String(), protocol: "icmp", jump: "DROP"},
 	}
 
-	if !chain.DroppedInternetConnection {
+	if !chain.HasInternetConnection {
 		adminParams = append(adminParams, iptablesRequest{
 			chain: outputChainName, src: chain.Address.IP.String(), state: "NEW", jump: "DROP"})
 	}
