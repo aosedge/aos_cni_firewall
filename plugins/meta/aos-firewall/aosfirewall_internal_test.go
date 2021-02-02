@@ -640,7 +640,7 @@ func execCmd(bin string, args ...string) (err error) {
 func createVeth(hostVethIfName string, containerNamespace string, containerVethIfName string, containerIP string) (err error) {
 	contNsName := filepath.Base(containerNamespace)
 
-	err = execCmd("ip", "link", "add", hostVethIfName, "type", "veth", "peer", containerVethIfName, "netns", contNsName)
+	err = execCmd("ip", "link", "add", hostVethIfName, "type", "veth", "peer", "name", containerVethIfName, "netns", contNsName)
 	if err != nil {
 		return err
 	}
@@ -650,12 +650,12 @@ func createVeth(hostVethIfName string, containerNamespace string, containerVethI
 		return err
 	}
 
-	err = execCmd("ip", "netns", "exec", contNsName, "ip", "addr", "add", "dev", "veth0", containerIP)
+	err = execCmd("ip", "netns", "exec", contNsName, "ip", "addr", "add", "dev", containerVethIfName, containerIP)
 	if err != nil {
 		return err
 	}
 
-	err = execCmd("ip", "netns", "exec", contNsName, "ip", "link", "set", "veth0", "up")
+	err = execCmd("ip", "netns", "exec", contNsName, "ip", "link", "set", containerVethIfName, "up")
 	if err != nil {
 		return err
 	}
@@ -807,7 +807,7 @@ func buildServiceConfig(containerID string, cont testContainer, outputUUID strin
 	args = &skel.CmdArgs{
 		ContainerID: containerID,
 		Netns:       cont.ns.Path(),
-		IfName:      "veth0",
+		IfName:      cont.vethIn,
 	}
 
 	config := pluginConf{
@@ -852,7 +852,7 @@ func buildServiceConfig(containerID string, cont testContainer, outputUUID strin
 
 	prevResult.Interfaces = append(prevResult.Interfaces, i)
 
-	i, err = getInterfaceEntry("veth0", &cont.ns)
+	i, err = getInterfaceEntry(cont.vethIn, &cont.ns)
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +909,7 @@ func buildContainer(cont *testContainer) (err error) {
 		return err
 	}
 
-	err = addDefaultRoute(cont.ns, "veth0", cont.br.ipnet)
+	err = addDefaultRoute(cont.ns, cont.vethIn, cont.br.ipnet)
 	if err != nil {
 		return err
 	}
