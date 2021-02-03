@@ -375,6 +375,8 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		{chain: outputChainName, src: chain.Address.IP.String(), protocol: "icmp", jump: "DROP"},
 	}
 
+	chainFilters = append(chainFilters, adminParams...)
+
 	if !chain.HasInternetConnection {
 		adminParams = append(adminParams, iptablesRequest{
 			chain: outputChainName, src: chain.Address.IP.String(), state: "NEW", jump: "DROP"})
@@ -386,6 +388,8 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		{chain: chain.Name, src: chain.Gateway.String() + "/" + mask, protocol: "udp", jump: "ACCEPT"},
 		// Accept all user specified incoming traffic
 	}
+
+	chainFilters = append(chainFilters, acceptParams...)
 
 	var outputParams []iptablesRequest
 	for _, dchain := range f.chainMap {
@@ -404,12 +408,17 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		}
 	}
 
-	inputParams := []iptablesRequest{
+	chainFilters = append(chainFilters, outputParams...)
+
+	if len(chain.InputPortsTCP) > 0 {
 		// Return from current chain if input is withing allowed port range
-		{chain: chain.Name, src: "0.0.0.0" + "/" + mask,
-			dPorts: strings.Join(chain.InputPortsTCP, ","), protocol: "tcp", jump: "RETURN"},
-		{chain: chain.Name, src: "0.0.0.0" + "/" + mask,
-			dPorts: strings.Join(chain.InputPortsUDP, ","), protocol: "udp", jump: "RETURN"},
+		chainFilters = append(chainFilters, iptablesRequest{chain: chain.Name, src: "0.0.0.0" + "/" + mask,
+			dPorts: strings.Join(chain.InputPortsTCP, ","), protocol: "tcp", jump: "RETURN"})
+	}
+
+	if len(chain.InputPortsUDP) > 0 {
+		chainFilters = append(chainFilters, iptablesRequest{chain: chain.Name, src: "0.0.0.0" + "/" + mask,
+			dPorts: strings.Join(chain.InputPortsUDP, ","), protocol: "udp", jump: "RETURN"})
 	}
 
 	dropParams := []iptablesRequest{
@@ -418,7 +427,9 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		{chain: chain.Name, protocol: "udp", jump: "DROP"},
 	}
 
-	return append(append(append(append(adminParams, acceptParams...), outputParams...), inputParams...), dropParams...)
+	chainFilters = append(chainFilters, dropParams...)
+
+	return chainFilters
 }
 
 func (i *iptablesRequest) formatRequest() (request []string, err error) {
