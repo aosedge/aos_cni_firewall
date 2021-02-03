@@ -50,8 +50,7 @@ type AccessChain struct {
 	// Unique chain name,
 	// must be unique across the system
 	Name string `json:"name"`
-	// PriviousChainName is the iptables chain
-	// where rules entry begins
+	// ContainerID id of the container
 	ContainerID string `json:"containerID"`
 	// Address is the ip of the container
 	Address net.IPNet `json:"address"`
@@ -112,7 +111,7 @@ type iptablesRequest struct {
 // gateway: ip of the bridge container can be accessed with
 // hasInternetConnection: specifies if container has access to network
 func NewAccessChain(name string, containerID string, address net.IPNet, gateway net.IP, hasInternetConnection bool) (chain *AccessChain) {
-	return &AccessChain{name, containerID, address, gateway,
+	return &AccessChain{utils.FormatChainName(name, containerID), containerID, address, gateway,
 		[]AccessRule{}, []string{}, []string{}, hasInternetConnection}
 }
 
