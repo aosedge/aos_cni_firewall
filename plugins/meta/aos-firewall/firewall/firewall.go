@@ -229,6 +229,8 @@ func (f *Firewall) Del(containerID string) (err error) {
 		return nil
 	}
 
+	delete(f.chainMap, containerID)
+
 	for _, dchain := range f.chainMap {
 		for _, outrule := range dchain.OutRules {
 			if outrule.DestContainerID == containerID {
@@ -251,8 +253,6 @@ func (f *Firewall) Del(containerID string) (err error) {
 		action: tableDelete, chain: outputChainName, src: c.Address.IP.String(), protocol: "icmp", jump: "DROP"})
 
 	f.iptables.DeleteChain("filter", c.Name)
-
-	delete(f.chainMap, containerID)
 
 	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
 		return err
