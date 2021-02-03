@@ -17,6 +17,7 @@
 package firewall
 
 import (
+	"fmt"
 	"net"
 
 	"github.com/containernetworking/cni/pkg/types/current"
@@ -110,13 +111,13 @@ var _ = Describe("Firewall", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(rules).To(Equal([]string{
-			"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-			"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p udp -m udp -j ACCEPT",
-			"-A AOS_TEST_SERVICE2 -s 10.0.0.2/32 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-			"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j RETURN",
-			"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p udp -m udp -j RETURN",
-			"-A AOS_TEST_SERVICE2 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP",
-			"-A AOS_TEST_SERVICE2 -p udp -m udp -j DROP",
+			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
+			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
+			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j RETURN", chain2.Name),
+			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -j RETURN", chain2.Name),
+			fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain2.Name),
+			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
 		}))
 	})
 
@@ -132,12 +133,12 @@ var _ = Describe("Firewall", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(rules).To(Equal([]string{
-				"-A AOS_TEST_SERVICE1 -s 10.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-				"-A AOS_TEST_SERVICE1 -s 10.0.0.0/16 -p udp -m udp -j ACCEPT",
-				"-A AOS_TEST_SERVICE1 -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1001:1002,1005,1006 -j RETURN",
-				"-A AOS_TEST_SERVICE1 -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN",
-				"-A AOS_TEST_SERVICE1 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP",
-				"-A AOS_TEST_SERVICE1 -p udp -m udp -j DROP",
+				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain1.Name),
+				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1001:1002,1005,1006 -j RETURN", chain1.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN", chain1.Name),
+				fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain1.Name),
+				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
 			}))
 		})
 
@@ -152,14 +153,14 @@ var _ = Describe("Firewall", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(rules).To(Equal([]string{
-				"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-				"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p udp -m udp -j ACCEPT",
-				"-A AOS_TEST_SERVICE2 -s 10.0.0.2/32 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2001:2002 -j ACCEPT",
-				"-A AOS_TEST_SERVICE2 -s 10.0.0.2/32 -p udp -m udp --dport 2002 -j ACCEPT",
-				"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2000:2002,2004,2005 -j RETURN",
-				"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN",
-				"-A AOS_TEST_SERVICE2 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP",
-				"-A AOS_TEST_SERVICE2 -p udp -m udp -j DROP",
+				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
+				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2001:2002 -j ACCEPT", chain2.Name),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -p udp -m udp --dport 2002 -j ACCEPT", chain2.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2000:2002,2004,2005 -j RETURN", chain2.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN", chain2.Name),
+				fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain2.Name),
+				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
 			}))
 
 			rules, err = listFilterRules(chain1.Name)
@@ -169,14 +170,14 @@ var _ = Describe("Firewall", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(rules).To(Equal([]string{
-				"-A AOS_TEST_SERVICE1 -s 10.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-				"-A AOS_TEST_SERVICE1 -s 10.0.0.0/16 -p udp -m udp -j ACCEPT",
-				"-A AOS_TEST_SERVICE1 -s 20.0.0.2/32 -p tcp -m tcp --dport 1002 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-				"-A AOS_TEST_SERVICE1 -s 20.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT",
-				"-A AOS_TEST_SERVICE1 -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1001:1002,1005,1006 -j RETURN",
-				"-A AOS_TEST_SERVICE1 -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN",
-				"-A AOS_TEST_SERVICE1 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP",
-				"-A AOS_TEST_SERVICE1 -p udp -m udp -j DROP",
+				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain1.Name),
+				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -p tcp -m tcp --dport 1002 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain1.Name),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", chain1.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1001:1002,1005,1006 -j RETURN", chain1.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN", chain1.Name),
+				fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain1.Name),
+				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
 			}))
 		})
 
@@ -193,12 +194,12 @@ var _ = Describe("Firewall", func() {
 			rules, err = listFilterRules(chain2.Name)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rules).To(Equal([]string{
-				"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT",
-				"-A AOS_TEST_SERVICE2 -s 20.0.0.0/16 -p udp -m udp -j ACCEPT",
-				"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2000:2002,2004,2005 -j RETURN",
-				"-A AOS_TEST_SERVICE2 -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN",
-				"-A AOS_TEST_SERVICE2 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP",
-				"-A AOS_TEST_SERVICE2 -p udp -m udp -j DROP",
+				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
+				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2000:2002,2004,2005 -j RETURN", chain2.Name),
+				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN", chain2.Name),
+				fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain2.Name),
+				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
 			}))
 
 			err = fw.Del(chain2.ContainerID)
