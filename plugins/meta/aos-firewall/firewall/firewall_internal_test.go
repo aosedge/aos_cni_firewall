@@ -115,9 +115,40 @@ var _ = Describe("Firewall", func() {
 			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
 			fmt.Sprintf("-A %s -s 10.0.0.2/32 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
 			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j RETURN", chain2.Name),
-			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -j RETURN", chain2.Name),
 			fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain2.Name),
 			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
+		}))
+	})
+
+	It("No exposed ports were provided", func() {
+		var iconf3 current.IPConfig
+
+		iconf3.Address.IP = net.IPv4(30, 0, 0, 2)
+		iconf3.Gateway = net.IPv4(30, 0, 0, 1)
+		iconf3.Address.Mask = net.IPv4Mask(0xff, 0xff, 0, 0)
+
+		// No in rules were provided
+		chain3 := NewAccessChain("AOS_TEST_SERVICE3", "3333-3333-3333-3333", iconf3.Address, iconf3.Gateway, true)
+		chain3.AddOutRule("0000-0000-0000-0000", "1002", "tcp")
+		chain3.AddOutRule("0000-0000-0000-0000", "1003", "udp")
+
+		err = fw.Add(chain3)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = fw.Check(chain3)
+		Expect(err).NotTo(HaveOccurred())
+
+		rules, err := listFilterRules(chain3.Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = fw.Del(chain3.ContainerID)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(rules).To(Equal([]string{
+			fmt.Sprintf("-A %s -s 30.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain3.Name),
+			fmt.Sprintf("-A %s -s 30.0.0.0/16 -p udp -m udp -j ACCEPT", chain3.Name),
+			fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain3.Name),
+			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain3.Name),
 		}))
 	})
 
