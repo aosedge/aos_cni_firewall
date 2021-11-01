@@ -1,0 +1,13 @@
+stages:
+  - dependency
+
+whitesource:
+  only:
+    refs:
+     - master
+     - develop
+  tags:
+    - whitesource_ci
+  stage: dependency
+  script:
+    - java -jar /usr/bin/wss-unified-agent.jar -apiKey $WSS_API_KEY -projectToken $WSS_CNI_FIREWALL_TOKEN -userKey $WSS_USER_KEY  -c ./ci/wss-firewall-cni.conf -d ./ -scanComment $CI_COMMIT_SHORT_SHA
