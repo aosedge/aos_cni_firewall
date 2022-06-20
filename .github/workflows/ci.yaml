@@ -4,22 +4,39 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  ws_check:
-    runs-on: [self-hosted, linux, x64]
-    env:
-      WSS_API_KEY: ${{ secrets.WSS_API_KEY }}
-      WSS_CNI_FIREWALL_TOKEN: ${{ secrets.WSS_CNI_FIREWALL_TOKEN }}
-      WSS_USER_KEY: ${{ secrets.WSS_USER_KEY }}
-    steps:
-      - name: Code checkout
-        uses: actions/checkout@v2
 
-      - name: ws_check
-        run: |
-          java -jar /usr/bin/wss-unified-agent.jar \
-           -apiKey $WSS_API_KEY \
-           -projectToken $WSS_CNI_FIREWALL_TOKEN \
-           -userKey $WSS_USER_KEY \
-           -c ./ci/wss-firewall-cni.conf -d ./ -scanComment $GITHUB_SHA
+  build:
+  
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+  
+    - name: WhiteSource Unified Agent Scan
+      env:
+        WSS_API_KEY: ${{ secrets.WSS_API_KEY }}
+        WSS_CNI_FIREWALL_TOKEN: ${{ secrets.WSS_CNI_FIREWALL_TOKEN }}
+        WSS_USER_KEY: ${{ secrets.WSS_USER_KEY }}
+        #WSS_CNI_FIREWALL_TOKEN: b47252ff688a450990cbcc4c597ef8dfbccb1d02db60419caac72a4997875583
+        #WSS_USER_KEY: 08af07fbbcba41988fcfe717a653b6a072b0917a63b5441ab72f12484f0792d6
+        #WSS_API_KEY: 392573ee17ae4c77be7768d83e893e67c203781370f441dda1e2159dfc6ee83a
+
+      run: |
+        echo Downloading WhiteSource Unified Agent
+        curl -LJO https://unified-agent.s3.amazonaws.com/wss-unified-agent.jar
+        if [[ "$(curl -sL https://unified-agent.s3.amazonaws.com/wss-unified-agent.jar.sha256)" != "$(sha256sum wss-unified-agent.jar)" ]] ; then
+          echo "Integrity Check Failed"
+        else
+          echo "Integrity Check Passed"
+          echo Starting WhiteSource Scan
+          echo "-userKey ${{ env.WSS_USER_KEY }}"
+          echo "-apiKey ${{ env.WSS_API_KEY }}"
+          echo "-projectToken ${{ env.WSS_CNI_FIREWALL_TOKEN }}"
+          java --version
+          java -jar wss-unified-agent.jar -apiKey "$WSS_API_KEY" -projectToken "$WSS_CNI_FIREWALL_TOKEN" -userKey "$WSS_USER_KEY" -c ci/wss-firewall-cni.conf -d plugins/meta/aos-firewall  -scanComment "hello WORLD"
+        fi
