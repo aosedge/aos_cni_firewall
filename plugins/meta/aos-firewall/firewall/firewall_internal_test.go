@@ -61,6 +61,8 @@ var _ = Describe("Firewall", func() {
 	var chain1 *AccessChain
 	var chain2 *AccessChain
 
+	interfaceInfoByIP = mockInterfaceInfoByIP
+
 	BeforeEach(func() {
 		fw, err = New(runtimeConfigPath)
 		Expect(err).NotTo(HaveOccurred())
@@ -89,7 +91,6 @@ var _ = Describe("Firewall", func() {
 		chain2.AddInRule("6000", "udp")
 		chain2.AddOutRule("0000-0000-0000-0000", "1002", "tcp")
 		chain2.AddOutRule("0000-0000-0000-0000", "1003", "udp")
-
 	})
 
 	It("Add One Way connection", func() {
@@ -108,16 +109,30 @@ var _ = Describe("Firewall", func() {
 		err = fw.Add(chain1)
 		Expect(err).NotTo(HaveOccurred())
 
-		rules, err := listFilterRules(chain2.Name)
+		rulesContainerChain, err := listFilterRules(chain2.Name)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(rules).To(Equal([]string{
+		rulesForward, err := listFilterRules(forwardChainName)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(rulesContainerChain).To(Equal([]string{
 			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
 			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
 			fmt.Sprintf("-A %s -s 10.0.0.2/32 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
 			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --dport 9000 --tcp-flags FIN,SYN,RST,ACK SYN -j RETURN", chain2.Name),
 			fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain2.Name),
 			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
+		}))
+
+		Expect(rulesForward).To(Equal([]string{
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
 		}))
 	})
 
@@ -139,17 +154,36 @@ var _ = Describe("Firewall", func() {
 		err = fw.Check(chain3)
 		Expect(err).NotTo(HaveOccurred())
 
-		rules, err := listFilterRules(chain3.Name)
+		rulesContainerChain, err := listFilterRules(chain3.Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		rulesForward, err := listFilterRules(forwardChainName)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = fw.Del(chain3.ContainerID)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(rules).To(Equal([]string{
+		Expect(rulesContainerChain).To(Equal([]string{
 			fmt.Sprintf("-A %s -s 30.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain3.Name),
 			fmt.Sprintf("-A %s -s 30.0.0.0/16 -p udp -m udp -j ACCEPT", chain3.Name),
 			fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain3.Name),
 			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain3.Name),
+		}))
+
+		Expect(rulesForward).To(Equal([]string{
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 30.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 30.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 30.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 30.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 30.0.0.2/32 -d 30.0.0.0/16 -j ACCEPT", forwardChainName),
 		}))
 	})
 
@@ -161,16 +195,30 @@ var _ = Describe("Firewall", func() {
 			err = fw.Check(chain1)
 			Expect(err).NotTo(HaveOccurred())
 
-			rules, err := listFilterRules(chain1.Name)
+			rulesContainerChain, err := listFilterRules(chain1.Name)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(rules).To(Equal([]string{
+			rulesForward, err := listFilterRules(forwardChainName)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(rulesContainerChain).To(Equal([]string{
 				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain1.Name),
 				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
 				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1001:1002,1005,1006 -j RETURN", chain1.Name),
 				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN", chain1.Name),
 				fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain1.Name),
 				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
+			}))
+
+			Expect(rulesForward).To(Equal([]string{
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
 			}))
 		})
 
@@ -181,10 +229,13 @@ var _ = Describe("Firewall", func() {
 			err = fw.Check(chain2)
 			Expect(err).NotTo(HaveOccurred())
 
-			rules, err := listFilterRules(chain2.Name)
+			rulesContainerChain, err := listFilterRules(chain2.Name)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(rules).To(Equal([]string{
+			rulesForward, err := listFilterRules(forwardChainName)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(rulesContainerChain).To(Equal([]string{
 				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
 				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
 				fmt.Sprintf("-A %s -s 10.0.0.2/32 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2001:2002 -j ACCEPT", chain2.Name),
@@ -195,13 +246,27 @@ var _ = Describe("Firewall", func() {
 				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
 			}))
 
-			rules, err = listFilterRules(chain1.Name)
+			Expect(rulesForward).To(Equal([]string{
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
+			}))
+
+			rulesContainerChain, err = listFilterRules(chain1.Name)
 			Expect(err).NotTo(HaveOccurred())
 
 			err = fw.Check(chain1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(rules).To(Equal([]string{
+			rulesForward, err = listFilterRules(forwardChainName)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(rulesContainerChain).To(Equal([]string{
 				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain1.Name),
 				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
 				fmt.Sprintf("-A %s -s 20.0.0.2/32 -p tcp -m tcp --dport 1002 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain1.Name),
@@ -211,21 +276,36 @@ var _ = Describe("Firewall", func() {
 				fmt.Sprintf("-A %s -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP", chain1.Name),
 				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
 			}))
+
+			Expect(rulesForward).To(Equal([]string{
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
+			}))
 		})
 
 		It("Delete Chain1", func() {
 			err = fw.Del(chain1.ContainerID)
 			Expect(err).NotTo(HaveOccurred())
 
-			rules, err := listFilterRules(chain1.Name)
-			Expect(rules).To(Equal([]string{}))
+			rulesContainerChain, err := listFilterRules(chain1.Name)
+			Expect(rulesContainerChain).To(Equal([]string{}))
 
 			err = fw.Check(chain1)
 			Expect(err).NotTo(HaveOccurred())
 
-			rules, err = listFilterRules(chain2.Name)
+			rulesContainerChain, err = listFilterRules(chain2.Name)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(rules).To(Equal([]string{
+
+			rulesForward, err := listFilterRules(forwardChainName)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(rulesContainerChain).To(Equal([]string{
 				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT", chain2.Name),
 				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
 				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 2000:2002,2004,2005 -j RETURN", chain2.Name),
@@ -234,14 +314,28 @@ var _ = Describe("Firewall", func() {
 				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
 			}))
 
+			Expect(rulesForward).To(Equal([]string{
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+			}))
+
 			err = fw.Del(chain2.ContainerID)
 			Expect(err).NotTo(HaveOccurred())
 
-			rules, err = listFilterRules(chain2.Name)
-			Expect(rules).To(Equal([]string{}))
+			rulesContainerChain, err = listFilterRules(chain2.Name)
+			Expect(rulesContainerChain).To(Equal([]string{}))
 
 			err = fw.Check(chain1)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
+
+/***********************************************************************************************************************
+ * Private
+ **********************************************************************************************************************/
+
+func mockInterfaceInfoByIP(ip net.IP) (name string, mask string, err error) {
+	return "wan", "16", nil
+}

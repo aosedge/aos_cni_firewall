@@ -66,6 +66,7 @@ const fullConf = `
    "cniVersion": "0.4.0",
    "ifName": "vethbdcda373",
    "prevResult": {
+	"cniVersion": "0.4.0",
 	 "interfaces": [
 	   {
 		 "name": "test-br0",
@@ -223,7 +224,7 @@ var _ = Describe("Aos Firewall", func() {
 			_, _, err = testutils.CmdAdd(targetNS.Path(), args.ContainerID, IFNAME, []byte(fullConf), func() (err error) {
 				return cmdAdd(args)
 			})
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(HaveOccurred())
 
 			err = testutils.CmdCheck(targetNS.Path(), args.ContainerID, IFNAME, []byte(fullConf), func() (err error) {
 				return cmdCheck(args)
