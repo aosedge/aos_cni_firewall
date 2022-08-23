@@ -27,7 +27,7 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 
-	"gitpct.epam.com/epmd-aepr/aos_cni_firewall/plugins/meta/aos-firewall/firewall"
+	"github.com/aoscloud/aos_cni_firewall/plugins/meta/aos-firewall/firewall"
 )
 
 /*******************************************************************************

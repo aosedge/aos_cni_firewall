@@ -1,4 +1,4 @@
-module gitpct.epam.com/epmd-aepr/aos_cni_firewall
+module github.com/aoscloud/aos_cni_firewall
 
 go 1.18
 
