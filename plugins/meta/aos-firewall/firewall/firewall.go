@@ -78,12 +78,14 @@ type AccessChain struct {
 
 // AccessRule contains parameters to configure one rule for a single container
 type AccessRule struct {
-	// system-wide unique container identifier
-	DestContainerID string `json:"destContainerID"`
-	// Comma separated list of ports or port ranges
-	Ports string `json:"ports"`
-	// Protocol, tcp or udp, default is tcp
-	Protocol string `json:"protocol"`
+	// DstIP is the ip of the destination
+	DstIP string `json:"dstIp"`
+	// DstPort is the port of the destination
+	DstPort string `json:"dstPort"`
+	// Proto is the protocol of the destination
+	Proto string `json:"proto"`
+	// SrcIP is the ip of the source
+	SrcIP string `json:"srcIp"`
 }
 
 // Firewall handles user defined chains
@@ -162,23 +164,6 @@ func (c *AccessChain) AddInRule(ports, protocol string) (err error) {
 	return nil
 }
 
-// AddOutRule adds configuration to the chain for outgoing connections,
-// containerId is system-wide unique container identifier
-// port can be a single port port=5000, a list or comma separeted ports
-// port=5000,5005 or a range ports=5000:5005
-// protocol=tcp or udp, default is tcp
-func (c *AccessChain) AddOutRule(containerID string, ports string, protocol string) (err error) {
-	if containerID == "" {
-		return fmt.Errorf("no container id was specified")
-	}
-	if protocol == "" {
-		protocol = tcpProtocol
-	}
-	c.OutRules = append(c.OutRules, AccessRule{containerID, ports, protocol})
-
-	return nil
-}
-
 // New returns Firewall instance
 // configPath: the path where runtime state of the plugin is stored
 func New(configPath string) (f *Firewall, err error) {
@@ -214,16 +199,6 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 		return err
 	}
 
-	for _, dchain := range f.chainMap {
-		for _, outrule := range dchain.OutRules {
-			if chain, ok := f.chainMap[outrule.DestContainerID]; ok {
-				if err = f.update(chain); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
 	if err = f.update(c); err != nil {
 		return err
 	}
@@ -253,36 +228,24 @@ func (f *Firewall) Del(containerID string) (err error) {
 
 	delete(f.chainMap, containerID)
 
-	for _, dchain := range f.chainMap {
-		for _, outrule := range c.OutRules {
-			if outrule.DestContainerID == dchain.ContainerID {
-				f.execute(&iptablesRequest{
-					action: tableDelete,
-					chain:  forwardChainName,
-					src:    dchain.Address.IP.String(),
-					dest:   c.Address.IP.String(),
-					jump:   "ACCEPT",
-				})
+	for _, outrule := range c.OutRules {
+		f.execute(&iptablesRequest{
+			action:   tableDelete,
+			chain:    forwardChainName,
+			src:      outrule.SrcIP,
+			dest:     outrule.DstIP,
+			dPorts:   outrule.DstPort,
+			protocol: outrule.Proto,
+			jump:     "ACCEPT",
+		})
 
-				f.execute(&iptablesRequest{
-					action: tableDelete,
-					chain:  forwardChainName,
-					src:    c.Address.IP.String(),
-					dest:   dchain.Address.IP.String(),
-					jump:   "ACCEPT",
-				})
-			}
-		}
-	}
-
-	for _, dchain := range f.chainMap {
-		for _, outrule := range dchain.OutRules {
-			if outrule.DestContainerID == containerID {
-				if err = f.update(dchain); err != nil {
-					return err
-				}
-			}
-		}
+		f.execute(&iptablesRequest{
+			action: tableDelete,
+			chain:  forwardChainName,
+			src:    outrule.DstIP,
+			dest:   outrule.SrcIP,
+			jump:   "ACCEPT",
+		})
 	}
 
 	if err := f.iptables.ClearChain("filter", c.Name); err != nil {
@@ -352,16 +315,6 @@ func (f *Firewall) Check(c *AccessChain) (err error) {
 
 	if err = f.hasApplied(c); err != nil {
 		return err
-	}
-
-	for _, dchain := range f.chainMap {
-		for _, outrule := range dchain.OutRules {
-			if outrule.DestContainerID == c.ContainerID {
-				if err = f.hasApplied(dchain); err != nil {
-					return err
-				}
-			}
-		}
 	}
 
 	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
@@ -451,8 +404,8 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 
 	adminParams := []iptablesRequest{
 		// Configure admin chains
-		{action: tableInsert, chain: "FORWARD", jump: forwardChainName},
 		{action: tableInsert, chain: "FORWARD", jump: forwardPortChainName},
+		{action: tableInsert, chain: "FORWARD", jump: forwardChainName},
 		{chain: "FORWARD", jump: outputChainName},
 		{chain: forwardPortChainName, dest: chain.Address.IP.String(), state: "NEW", jump: chain.Name},
 		{chain: outputChainName, src: chain.Address.IP.String(), protocol: "icmp", jump: "DROP"},
@@ -502,36 +455,23 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 	chainFilters = append(chainFilters, acceptParams...)
 
 	var outputParams []iptablesRequest
-	for _, dchain := range f.chainMap {
-		for _, rule := range dchain.OutRules {
-			if rule.DestContainerID == chain.ContainerID {
-				if dchain.Address.IP != nil {
-					// Accept user specified output connections
-					outputParams = append(outputParams, iptablesRequest{
-						chain:    chain.Name,
-						src:      dchain.Address.IP.String(),
-						protocol: rule.Protocol,
-						dPorts:   rule.Ports,
-						jump:     "ACCEPT",
-					})
 
-					// Allow traffic forward between containers on different subnets
-					outputParams = append(outputParams, iptablesRequest{
-						chain: forwardChainName,
-						src:   dchain.Address.IP.String(),
-						dest:  chain.Address.IP.String(),
-						jump:  "ACCEPT",
-					})
+	for _, rule := range chain.OutRules {
+		outputParams = append(outputParams, iptablesRequest{
+			chain:    forwardChainName,
+			src:      rule.SrcIP,
+			dest:     rule.DstIP,
+			dPorts:   rule.DstPort,
+			protocol: rule.Proto,
+			jump:     "ACCEPT",
+		})
 
-					outputParams = append(outputParams, iptablesRequest{
-						chain: forwardChainName,
-						src:   chain.Address.IP.String(),
-						dest:  dchain.Address.IP.String(),
-						jump:  "ACCEPT",
-					})
-				}
-			}
-		}
+		outputParams = append(outputParams, iptablesRequest{
+			chain: forwardChainName,
+			src:   rule.DstIP,
+			dest:  rule.SrcIP,
+			jump:  "ACCEPT",
+		})
 	}
 
 	chainFilters = append(chainFilters, outputParams...)
@@ -592,7 +532,7 @@ func (i *iptablesRequest) formatRequest() (request []string, err error) {
 	}
 
 	if i.protocol == tcpProtocol {
-		request = append(request, "-p", "tcp", "-m", "tcp", "--syn")
+		request = append(request, "-p", "tcp", "-m", "tcp")
 	} else if i.protocol == udpProtocol {
 		request = append(request, "-p", "udp", "-m", "udp")
 	} else if i.protocol == icmpProtocol {
