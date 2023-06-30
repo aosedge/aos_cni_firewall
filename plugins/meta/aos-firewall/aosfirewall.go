@@ -54,14 +54,14 @@ type InputAccessEntry struct {
 
 // OutputAccessEntry is the rule that restricts output connections from the specified container
 type OutputAccessEntry struct {
-	// Comma separated list of ports or ranges
-	// passed with iptables parameters --dports 1001:1002,1005
-	Port string `json:"port"`
+	// Destination IP address
+	DstIP string `json:"dstIp"`
+	// Destination port
+	DstPort string `json:"dstPort"`
 	// tcp or udp, default is tcp
-	Protocol string `json:"protocol"`
-	// UUID is the system-wide unique container identifier to which
-	// outbound connection restriction is applied
-	UUID string `json:"uuid,omitempty"`
+	Proto string `json:"proto"`
+	// Source IP address
+	SrcIP string `json:"srcIp"`
 }
 
 type pluginConf struct {
@@ -181,9 +181,12 @@ func getAccessChainFromConfig(conf *pluginConf) (cn *firewall.AccessChain, err e
 	}
 
 	for _, chain := range conf.OutputAccess {
-		if err = cn.AddOutRule(chain.UUID, chain.Port, chain.Protocol); err != nil {
-			return nil, err
-		}
+		cn.OutRules = append(cn.OutRules, firewall.AccessRule{
+			DstIP:   chain.DstIP,
+			DstPort: chain.DstPort,
+			SrcIP:   chain.SrcIP,
+			Proto:   chain.Proto,
+		})
 	}
 
 	return cn, nil

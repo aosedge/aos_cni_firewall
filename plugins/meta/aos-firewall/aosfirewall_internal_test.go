@@ -428,29 +428,39 @@ var _ = Describe("Aos Firewall", func() {
 			br2.bridge, err = createBridge(br2.name, br2.ipnet, 1500, false, false)
 			Expect(err).NotTo(HaveOccurred())
 
-			cont11 = testContainer{name: "cont11", ipnet: "11.1.0.10/24", vethIn: "in11",
+			cont11 = testContainer{
+				name: "cont11", ipnet: "11.1.0.10/24", vethIn: "in11",
 				vethOut: "out11", chain: "CONT11", br: &br1, uuid: "1111-1111",
-				allowPublicConnections: false}
+				allowPublicConnections: false,
+			}
 
-			cont12 = testContainer{name: "cont12", ipnet: "11.1.0.12/24", vethIn: "in12",
+			cont12 = testContainer{
+				name: "cont12", ipnet: "11.1.0.12/24", vethIn: "in12",
 				vethOut: "out12", chain: "CONT12", br: &br1, uuid: "1211-1111",
-				allowPublicConnections: false}
+				allowPublicConnections: false,
+			}
 
-			cont2 = testContainer{name: "cont2", ipnet: "22.2.0.10/24", vethIn: "in2",
+			cont2 = testContainer{
+				name: "cont2", ipnet: "22.2.0.10/24", vethIn: "in2",
 				vethOut: "out2", chain: "CONT2", br: &br2, uuid: "2222-2222",
-				allowPublicConnections: true}
+				allowPublicConnections: true,
+			}
 
 			cont11.outputEntries = []OutputAccessEntry{
-				{Port: "202:300", Protocol: "tcp", UUID: cont2.uuid},
+				{Proto: "tcp", DstPort: "202", SrcIP: "11.1.0.10", DstIP: "22.2.0.10"},
+				{Proto: "tcp", DstPort: "300", SrcIP: "11.1.0.10", DstIP: "22.2.0.10"},
 			}
 
 			cont12.outputEntries = []OutputAccessEntry{
-				{Port: "202:300", Protocol: "tcp", UUID: cont2.uuid},
+				{Proto: "tcp", DstPort: "202", SrcIP: "11.1.0.12", DstIP: "22.2.0.10"},
+				{Proto: "tcp", DstPort: "300", SrcIP: "11.1.0.12", DstIP: "22.2.0.10"},
 			}
 
 			cont2.outputEntries = []OutputAccessEntry{
-				{Port: "202:300", Protocol: "tcp", UUID: cont11.uuid},
-				{Port: "202:300", Protocol: "tcp", UUID: cont12.uuid},
+				{Proto: "tcp", DstPort: "202", SrcIP: "22.2.0.10", DstIP: "11.1.0.10"},
+				{Proto: "tcp", DstPort: "300", SrcIP: "22.2.0.10", DstIP: "11.1.0.10"},
+				{Proto: "tcp", DstPort: "202", SrcIP: "22.2.0.10", DstIP: "11.1.0.12"},
+				{Proto: "tcp", DstPort: "300", SrcIP: "22.2.0.10", DstIP: "11.1.0.12"},
 			}
 
 			err = buildContainer(&cont11)
