@@ -288,6 +288,14 @@ func (f *Firewall) Del(containerID string) (err error) {
 		jump:   "ACCEPT",
 	})
 
+	f.execute(&iptablesRequest{
+		action: tableDelete,
+		chain:  forwardChainName,
+		src:    c.Gateway.String() + "/" + c.GatewayPrefixLen,
+		dest:   c.Address.IP.String(),
+		jump:   "ACCEPT",
+	})
+
 	f.iptables.DeleteChain("filter", c.Name)
 
 	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
@@ -485,6 +493,13 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		chain: forwardChainName,
 		src:   chain.Address.IP.String(),
 		dest:  chain.Gateway.String() + "/" + chain.GatewayPrefixLen,
+		jump:  "ACCEPT",
+	})
+
+	chainFilters = append(chainFilters, iptablesRequest{
+		chain: forwardChainName,
+		src:   chain.Gateway.String() + "/" + chain.GatewayPrefixLen,
+		dest:  chain.Address.IP.String(),
 		jump:  "ACCEPT",
 	})
 
