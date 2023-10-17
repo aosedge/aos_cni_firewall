@@ -20,7 +20,6 @@ package firewall
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -44,7 +43,7 @@ type fileConfig struct {
 func newFileConfig(path string) (f *fileConfig, err error) {
 	f = &fileConfig{path: path}
 
-	if err = os.MkdirAll(filepath.Dir(path), 0600); err != nil {
+	if err = os.MkdirAll(filepath.Dir(path), 0o600); err != nil {
 		return nil, err
 	}
 
@@ -74,7 +73,7 @@ func (f *fileConfig) Unlock() (err error) {
 }
 
 func (f *fileConfig) Load(v interface{}) (err error) {
-	configJSON, err := ioutil.ReadFile(f.path)
+	configJSON, err := os.ReadFile(f.path)
 	if err != nil {
 		return err
 	}
@@ -91,7 +90,7 @@ func (f *fileConfig) Save(v interface{}) (err error) {
 		return fmt.Errorf("failed to serialize config %s", err)
 	}
 
-	err = ioutil.WriteFile(f.path, conf, 0644)
+	err = os.WriteFile(f.path, conf, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to write config %s", err)
 	}

@@ -188,7 +188,7 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 		return err
 	}
 
-	defer f.runtimeConfig.Unlock()
+	defer f.runtimeConfig.Unlock() //nolint:errcheck
 
 	if err = f.runtimeConfig.Load(&f.chainMap); err != nil {
 		return err
@@ -211,14 +211,14 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 }
 
 // Del deletes user defined chain to the firewall
-func (f *Firewall) Del(containerID string) (err error) {
-	if err = f.runtimeConfig.Lock(); err != nil {
-		return err
+func (f *Firewall) Del(containerID string) (errDel error) {
+	if errDel = f.runtimeConfig.Lock(); errDel != nil {
+		return errDel
 	}
-	defer f.runtimeConfig.Unlock()
+	defer f.runtimeConfig.Unlock() //nolint:errcheck
 
-	if err = f.runtimeConfig.Load(&f.chainMap); err != nil {
-		return err
+	if errDel = f.runtimeConfig.Load(&f.chainMap); errDel != nil {
+		return errDel
 	}
 
 	c, ok := f.chainMap[containerID]
@@ -229,7 +229,7 @@ func (f *Firewall) Del(containerID string) (err error) {
 	delete(f.chainMap, containerID)
 
 	for _, outrule := range c.OutRules {
-		f.execute(&iptablesRequest{
+		if err := f.execute(&iptablesRequest{
 			action:   tableDelete,
 			chain:    forwardChainName,
 			src:      outrule.SrcIP,
@@ -237,72 +237,94 @@ func (f *Firewall) Del(containerID string) (err error) {
 			dPorts:   outrule.DstPort,
 			protocol: outrule.Proto,
 			jump:     "ACCEPT",
-		})
+		}); err != nil && errDel == nil {
+			errDel = err
+		}
 
-		f.execute(&iptablesRequest{
+		if err := f.execute(&iptablesRequest{
 			action: tableDelete,
 			chain:  forwardChainName,
 			src:    outrule.DstIP,
 			dest:   outrule.SrcIP,
 			jump:   "ACCEPT",
-		})
+		}); err != nil && errDel == nil {
+			errDel = err
+		}
 	}
 
-	if err := f.iptables.ClearChain("filter", c.Name); err != nil {
-		return err
+	if err := f.iptables.ClearChain("filter", c.Name); err != nil && errDel == nil {
+		errDel = err
 	}
 
-	f.execute(&iptablesRequest{
+	if err := f.execute(&iptablesRequest{
 		action: tableDelete, chain: forwardPortChainName, dest: c.Address.IP.String(), state: "NEW", jump: c.Name,
-	})
-	f.execute(&iptablesRequest{
+	}); err != nil && errDel == nil {
+		errDel = err
+	}
+
+	if err := f.execute(&iptablesRequest{
 		action: tableDelete, chain: outputChainName, src: c.Address.IP.String(), state: "NEW", jump: "DROP",
-	})
-	f.execute(&iptablesRequest{
+	}); err != nil && errDel == nil {
+		errDel = err
+	}
+
+	if err := f.execute(&iptablesRequest{
 		action: tableDelete, chain: outputChainName, src: c.Address.IP.String(), protocol: "icmp", jump: "DROP",
-	})
+	}); err != nil && errDel == nil {
+		errDel = err
+	}
 
 	if c.HasInternetConnection {
-		f.execute(&iptablesRequest{
+		if err := f.execute(&iptablesRequest{
 			action: tableDelete,
 			chain:  forwardChainName,
 			src:    c.Address.IP.String(),
 			output: c.PublicInterface,
 			jump:   "ACCEPT",
-		})
+		}); err != nil && errDel == nil {
+			errDel = err
+		}
 
-		f.execute(&iptablesRequest{
+		if err := f.execute(&iptablesRequest{
 			action: tableDelete,
 			chain:  forwardChainName,
 			input:  c.PublicInterface,
 			dest:   c.Address.IP.String(),
 			jump:   "ACCEPT",
-		})
+		}); err != nil && errDel == nil {
+			errDel = err
+		}
 	}
 
-	f.execute(&iptablesRequest{
+	if err := f.execute(&iptablesRequest{
 		action: tableDelete,
 		chain:  forwardChainName,
 		src:    c.Address.IP.String(),
 		dest:   c.Gateway.String() + "/" + c.GatewayPrefixLen,
 		jump:   "ACCEPT",
-	})
+	}); err != nil && errDel == nil {
+		errDel = err
+	}
 
-	f.execute(&iptablesRequest{
+	if err := f.execute(&iptablesRequest{
 		action: tableDelete,
 		chain:  forwardChainName,
 		src:    c.Gateway.String() + "/" + c.GatewayPrefixLen,
 		dest:   c.Address.IP.String(),
 		jump:   "ACCEPT",
-	})
-
-	f.iptables.DeleteChain("filter", c.Name)
-
-	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
-		return err
+	}); err != nil && errDel == nil {
+		errDel = err
 	}
 
-	return err
+	if err := f.iptables.DeleteChain("filter", c.Name); err != nil && errDel == nil {
+		errDel = err
+	}
+
+	if err := f.runtimeConfig.Save(f.chainMap); err != nil && errDel == nil {
+		errDel = err
+	}
+
+	return errDel
 }
 
 // Check verifies that user defined chain is applied
@@ -311,7 +333,7 @@ func (f *Firewall) Check(c *AccessChain) (err error) {
 		return err
 	}
 
-	defer f.runtimeConfig.Unlock()
+	defer f.runtimeConfig.Unlock() //nolint:errcheck
 
 	if err = f.runtimeConfig.Load(&f.chainMap); err != nil {
 		return err
@@ -614,7 +636,9 @@ func (f *Firewall) execute(r *iptablesRequest) (err error) {
 	} else if r.action == tableInsert {
 		exists, err := f.iptables.Exists("filter", r.chain, params...)
 		if !exists && err == nil {
-			err = f.iptables.Insert("filter", r.chain, 1, params...)
+			if err = f.iptables.Insert("filter", r.chain, 1, params...); err != nil {
+				return fmt.Errorf("failed to insert rule to chain %s", err)
+			}
 		}
 	}
 
