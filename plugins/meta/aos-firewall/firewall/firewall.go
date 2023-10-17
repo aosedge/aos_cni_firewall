@@ -187,7 +187,6 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 	if err = f.runtimeConfig.Lock(); err != nil {
 		return err
 	}
-
 	defer f.runtimeConfig.Unlock() //nolint:errcheck
 
 	if err = f.runtimeConfig.Load(&f.chainMap); err != nil {
@@ -195,6 +194,7 @@ func (f *Firewall) Add(c *AccessChain) (err error) {
 	}
 
 	f.chainMap[c.ContainerID] = c
+
 	if err = f.ensureChains(c); err != nil {
 		return err
 	}
@@ -226,8 +226,55 @@ func (f *Firewall) Del(containerID string) (errDel error) {
 		return nil
 	}
 
+	if err := f.deleteOutRules(c); err != nil && errDel == nil {
+		errDel = err
+	}
+
+	if err := f.deleteAccessChain(c); err != nil && errDel == nil {
+		errDel = err
+	}
+
+	if err := f.runtimeConfig.Save(f.chainMap); err != nil && errDel == nil {
+		errDel = err
+	}
+
 	delete(f.chainMap, containerID)
 
+	return errDel
+}
+
+// Check verifies that user defined chain is applied
+func (f *Firewall) Check(c *AccessChain) (err error) {
+	if err = f.runtimeConfig.Lock(); err != nil {
+		return err
+	}
+
+	defer f.runtimeConfig.Unlock() //nolint:errcheck
+
+	if err = f.runtimeConfig.Load(&f.chainMap); err != nil {
+		return err
+	}
+
+	if _, ok := f.chainMap[c.ContainerID]; !ok {
+		return nil
+	}
+
+	if err = f.hasApplied(c); err != nil {
+		return err
+	}
+
+	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+/*******************************************************************************
+ * Private
+ ******************************************************************************/
+
+func (f *Firewall) deleteOutRules(c *AccessChain) (errDel error) {
 	for _, outrule := range c.OutRules {
 		if err := f.execute(&iptablesRequest{
 			action:   tableDelete,
@@ -252,6 +299,10 @@ func (f *Firewall) Del(containerID string) (errDel error) {
 		}
 	}
 
+	return errDel
+}
+
+func (f *Firewall) deleteAccessChain(c *AccessChain) (errDel error) {
 	if err := f.iptables.ClearChain("filter", c.Name); err != nil && errDel == nil {
 		errDel = err
 	}
@@ -320,43 +371,8 @@ func (f *Firewall) Del(containerID string) (errDel error) {
 		errDel = err
 	}
 
-	if err := f.runtimeConfig.Save(f.chainMap); err != nil && errDel == nil {
-		errDel = err
-	}
-
 	return errDel
 }
-
-// Check verifies that user defined chain is applied
-func (f *Firewall) Check(c *AccessChain) (err error) {
-	if err = f.runtimeConfig.Lock(); err != nil {
-		return err
-	}
-
-	defer f.runtimeConfig.Unlock() //nolint:errcheck
-
-	if err = f.runtimeConfig.Load(&f.chainMap); err != nil {
-		return err
-	}
-
-	if _, ok := f.chainMap[c.ContainerID]; !ok {
-		return nil
-	}
-
-	if err = f.hasApplied(c); err != nil {
-		return err
-	}
-
-	if err = f.runtimeConfig.Save(f.chainMap); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-/*******************************************************************************
- * Private
- ******************************************************************************/
 
 func (f *Firewall) hasApplied(c *AccessChain) (err error) {
 	chainFilter, err := f.formatIptablesRequest(c)
@@ -389,6 +405,7 @@ func (f *Firewall) update(c *AccessChain) (err error) {
 	if err = f.iptables.ClearChain("filter", c.Name); err != nil {
 		return fmt.Errorf("failed to clean old chain %s", err)
 	}
+
 	if len(chainRequests) <= 1 {
 		return nil
 	}
@@ -403,11 +420,14 @@ func (f *Firewall) update(c *AccessChain) (err error) {
 			if err := f.iptables.ClearChain("filter", c.Name); err != nil {
 				return
 			}
+
 			for i, chain := range currChains {
 				if i == 0 {
 					continue
 				}
+
 				params := strings.Split(chain, " ")
+
 				if err = f.iptables.Append("filter", c.Name, params[2:]...); err != nil {
 					break
 				}
@@ -429,63 +449,83 @@ func isMultiport(ports string) bool {
 }
 
 func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []iptablesRequest, err error) {
-	maskClass, _ := chain.Address.Mask.Size()
-	mask := strconv.Itoa(maskClass)
+	// Configure admin chains
+	chainFilters = append(chainFilters, f.formatAdminParams(chain)...)
 
-	adminParams := []iptablesRequest{
-		// Configure admin chains
+	// Allow internet access if chain has it
+	internetParams, err := f.formatInternetParams(chain)
+	if err != nil {
+		return nil, err
+	}
+
+	chainFilters = append(chainFilters, internetParams...)
+
+	// Accept all incoming connections within sub-network
+	chainFilters = append(chainFilters, f.formatAcceptParams(chain)...)
+
+	// Add output rules
+	chainFilters = append(chainFilters, f.formatOutputParams(chain)...)
+
+	// Allow traffic forward between containers on the same subnets
+	forwardParams, err := f.formatForwardParams(chain)
+	if err != nil {
+		return nil, err
+	}
+
+	chainFilters = append(chainFilters, forwardParams...)
+
+	// Return from current chain if input is withing allowed port range
+	chainFilters = append(chainFilters, f.formatInputParams(chain)...)
+
+	// Drop all
+	chainFilters = append(chainFilters, f.formatDropParams(chain)...)
+
+	return chainFilters, nil
+}
+
+func (f *Firewall) formatAdminParams(chain *AccessChain) []iptablesRequest {
+	return []iptablesRequest{
 		{action: tableInsert, chain: "FORWARD", jump: forwardPortChainName},
 		{action: tableInsert, chain: "FORWARD", jump: forwardChainName},
 		{chain: "FORWARD", jump: outputChainName},
 		{chain: forwardPortChainName, dest: chain.Address.IP.String(), state: "NEW", jump: chain.Name},
 		{chain: outputChainName, src: chain.Address.IP.String(), protocol: "icmp", jump: "DROP"},
 	}
+}
 
-	chainFilters = append(chainFilters, adminParams...)
-
+func (f *Firewall) formatInternetParams(chain *AccessChain) ([]iptablesRequest, error) {
 	if !chain.HasInternetConnection {
-		adminParams = append(adminParams, iptablesRequest{
-			chain: outputChainName, src: chain.Address.IP.String(), state: "NEW", jump: "DROP",
-		})
-	} else {
-		ip, err := gateway.DiscoverInterface()
-		if err != nil {
-			return nil, err
-		}
-
-		if chain.PublicInterface, _, err = interfaceInfoByIP(ip); err != nil {
-			return nil, err
-		}
-
-		// Allow internet access
-		adminParams = append(adminParams, iptablesRequest{
-			chain:  forwardChainName,
-			src:    chain.Address.IP.String(),
-			output: chain.PublicInterface,
-			jump:   "ACCEPT",
-		})
-
-		adminParams = append(adminParams, iptablesRequest{
-			chain: forwardChainName,
-			input: chain.PublicInterface,
-			dest:  chain.Address.IP.String(),
-			jump:  "ACCEPT",
-		})
+		return []iptablesRequest{
+			{chain: outputChainName, src: chain.Address.IP.String(), state: "NEW", jump: "DROP"},
+		}, nil
 	}
 
-	chainFilters = append(chainFilters, adminParams...)
+	ip, err := gateway.DiscoverInterface()
+	if err != nil {
+		return nil, err
+	}
 
-	acceptParams := []iptablesRequest{
-		// Accept all incoming connections within sub-network
+	if chain.PublicInterface, _, err = interfaceInfoByIP(ip); err != nil {
+		return nil, err
+	}
+
+	return []iptablesRequest{
+		{chain: forwardChainName, src: chain.Address.IP.String(), output: chain.PublicInterface, jump: "ACCEPT"},
+		{chain: forwardChainName, input: chain.PublicInterface, dest: chain.Address.IP.String(), jump: "ACCEPT"},
+	}, nil
+}
+
+func (f *Firewall) formatAcceptParams(chain *AccessChain) []iptablesRequest {
+	maskClass, _ := chain.Address.Mask.Size()
+	mask := strconv.Itoa(maskClass)
+
+	return []iptablesRequest{
 		{chain: chain.Name, src: chain.Gateway.String() + "/" + mask, protocol: "tcp", jump: "ACCEPT"},
 		{chain: chain.Name, src: chain.Gateway.String() + "/" + mask, protocol: "udp", jump: "ACCEPT"},
-		// Accept all user specified incoming traffic
 	}
+}
 
-	chainFilters = append(chainFilters, acceptParams...)
-
-	var outputParams []iptablesRequest
-
+func (f *Firewall) formatOutputParams(chain *AccessChain) (outputParams []iptablesRequest) {
 	for _, rule := range chain.OutRules {
 		outputParams = append(outputParams, iptablesRequest{
 			chain:    forwardChainName,
@@ -504,51 +544,56 @@ func (f *Firewall) formatIptablesRequest(chain *AccessChain) (chainFilters []ipt
 		})
 	}
 
-	chainFilters = append(chainFilters, outputParams...)
+	return outputParams
+}
 
+func (f *Firewall) formatForwardParams(chain *AccessChain) (forwardParams []iptablesRequest, err error) {
 	if _, chain.GatewayPrefixLen, err = interfaceInfoByIP(chain.Gateway); err != nil {
 		return nil, err
 	}
 
-	// Allow traffic forward between containers on the same subnets
-	chainFilters = append(chainFilters, iptablesRequest{
-		chain: forwardChainName,
-		src:   chain.Address.IP.String(),
-		dest:  chain.Gateway.String() + "/" + chain.GatewayPrefixLen,
-		jump:  "ACCEPT",
-	})
+	return []iptablesRequest{
+		{
+			chain: forwardChainName,
+			src:   chain.Address.IP.String(),
+			dest:  chain.Gateway.String() + "/" + chain.GatewayPrefixLen,
+			jump:  "ACCEPT",
+		},
+		{
+			chain: forwardChainName,
+			src:   chain.Gateway.String() + "/" + chain.GatewayPrefixLen,
+			dest:  chain.Address.IP.String(),
+			jump:  "ACCEPT",
+		},
+	}, nil
+}
 
-	chainFilters = append(chainFilters, iptablesRequest{
-		chain: forwardChainName,
-		src:   chain.Gateway.String() + "/" + chain.GatewayPrefixLen,
-		dest:  chain.Address.IP.String(),
-		jump:  "ACCEPT",
-	})
+func (f *Firewall) formatInputParams(chain *AccessChain) (inputParams []iptablesRequest) {
+	maskClass, _ := chain.Address.Mask.Size()
+	mask := strconv.Itoa(maskClass)
 
 	if len(chain.InputPortsTCP) > 0 {
-		// Return from current chain if input is withing allowed port range
-		chainFilters = append(chainFilters, iptablesRequest{
+		inputParams = append(inputParams, iptablesRequest{
 			chain: chain.Name, src: "0.0.0.0" + "/" + mask,
 			dPorts: strings.Join(chain.InputPortsTCP, ","), protocol: "tcp", jump: "RETURN",
 		})
 	}
 
 	if len(chain.InputPortsUDP) > 0 {
-		chainFilters = append(chainFilters, iptablesRequest{
+		inputParams = append(inputParams, iptablesRequest{
 			chain: chain.Name, src: "0.0.0.0" + "/" + mask,
 			dPorts: strings.Join(chain.InputPortsUDP, ","), protocol: "udp", jump: "RETURN",
 		})
 	}
 
-	dropParams := []iptablesRequest{
-		// Drop all
+	return inputParams
+}
+
+func (f *Firewall) formatDropParams(chain *AccessChain) []iptablesRequest {
+	return []iptablesRequest{
 		{chain: chain.Name, protocol: "tcp", jump: "DROP"},
 		{chain: chain.Name, protocol: "udp", jump: "DROP"},
 	}
-
-	chainFilters = append(chainFilters, dropParams...)
-
-	return chainFilters, nil
 }
 
 func (i *iptablesRequest) formatRequest() (request []string, err error) {
@@ -568,11 +613,12 @@ func (i *iptablesRequest) formatRequest() (request []string, err error) {
 		request = append(request, "-i", i.input)
 	}
 
-	if i.protocol == tcpProtocol {
+	switch i.protocol {
+	case tcpProtocol:
 		request = append(request, "-p", "tcp", "-m", "tcp")
-	} else if i.protocol == udpProtocol {
+	case udpProtocol:
 		request = append(request, "-p", "udp", "-m", "udp")
-	} else if i.protocol == icmpProtocol {
+	case icmpProtocol:
 		request = append(request, "-p", "icmp")
 	}
 
@@ -591,6 +637,7 @@ func (i *iptablesRequest) formatRequest() (request []string, err error) {
 			request = append(request, "--dport", i.dPorts)
 		}
 	}
+
 	if i.state != "" {
 		request = append(request, "-m", "conntrack", "--ctstate", i.state)
 	}
@@ -625,15 +672,16 @@ func (f *Firewall) execute(r *iptablesRequest) (err error) {
 		return fmt.Errorf("failed formant rule for chain %s", err)
 	}
 
-	if r.action == tableAppend {
+	switch r.action {
+	case tableAppend:
 		if err = f.iptables.AppendUnique("filter", r.chain, params...); err != nil {
 			return fmt.Errorf("failed to append rule to chain %s", err)
 		}
-	} else if r.action == tableDelete {
+	case tableDelete:
 		if err = f.iptables.Delete("filter", r.chain, params...); err != nil {
 			return fmt.Errorf("failed to delete rule from chain %s", err)
 		}
-	} else if r.action == tableInsert {
+	case tableInsert:
 		exists, err := f.iptables.Exists("filter", r.chain, params...)
 		if !exists && err == nil {
 			if err = f.iptables.Insert("filter", r.chain, 1, params...); err != nil {

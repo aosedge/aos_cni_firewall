@@ -196,17 +196,24 @@ func parseConfig(stdin []byte) (config *pluginConf, err error) {
 		return nil, fmt.Errorf("failed to parse network configuration: %v", err)
 	}
 
+	if config.IptablesAdminChainName == "" {
+		return nil, fmt.Errorf("IptablesAdminChainName must be specified")
+	}
+
 	// RawPrevResult contains the JSON response from the ADD/DEL command
 	if config.RawPrevResult != nil {
 		resultBytes, err := json.Marshal(config.RawPrevResult)
 		if err != nil {
 			return nil, fmt.Errorf("could not serialize prevResult: %s", err)
 		}
+
 		res, err := version.NewResult(config.CNIVersion, resultBytes)
 		if err != nil {
 			return nil, fmt.Errorf("could not parse prevResult: %s", err)
 		}
+
 		config.RawPrevResult = nil
+
 		config.PrevResult, err = current.NewResultFromResult(res)
 		if err != nil {
 			return nil, fmt.Errorf("could not convert result to current version: %s", err)
@@ -215,10 +222,6 @@ func parseConfig(stdin []byte) (config *pluginConf, err error) {
 
 	if config.RuntimeStatePath == "" {
 		config.RuntimeStatePath = defaultRuntimeStatePath
-	}
-
-	if config.IptablesAdminChainName == "" {
-		return nil, fmt.Errorf("IptablesAdminChainName must be specified")
 	}
 
 	return config, nil
