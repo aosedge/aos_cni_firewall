@@ -116,7 +116,7 @@ func cmdAdd(args *skel.CmdArgs) (err error) {
 		return err
 	}
 
-	if err := fw.Add(cn); err != nil {
+	if err = fw.Add(cn); err != nil {
 		return err
 	}
 
@@ -163,9 +163,7 @@ func cmdCheck(args *skel.CmdArgs) (err error) {
 func getAccessChainFromConfig(conf *pluginConf) (cn *firewall.AccessChain, err error) {
 	var containerAddresses []*current.IPConfig
 
-	for _, ip := range conf.PrevResult.IPs {
-		containerAddresses = append(containerAddresses, ip)
-	}
+	containerAddresses = append(containerAddresses, conf.PrevResult.IPs...)
 
 	if len(containerAddresses) == 0 {
 		return nil, fmt.Errorf("got no container IPs")
