@@ -289,11 +289,14 @@ func (f *Firewall) deleteOutRules(c *AccessChain) (errDel error) {
 		}
 
 		if err := f.execute(&iptablesRequest{
-			action: tableDelete,
-			chain:  forwardChainName,
-			src:    outrule.DstIP,
-			dest:   outrule.SrcIP,
-			jump:   "ACCEPT",
+			action:   tableDelete,
+			chain:    forwardChainName,
+			src:      outrule.DstIP,
+			dest:     outrule.SrcIP,
+			sPorts:   outrule.DstPort,
+			protocol: outrule.Proto,
+			state:    "RELATED,ESTABLISHED",
+			jump:     "ACCEPT",
 		}); err != nil && errDel == nil {
 			errDel = err
 		}
@@ -537,10 +540,13 @@ func (f *Firewall) formatOutputParams(chain *AccessChain) (outputParams []iptabl
 		})
 
 		outputParams = append(outputParams, iptablesRequest{
-			chain: forwardChainName,
-			src:   rule.DstIP,
-			dest:  rule.SrcIP,
-			jump:  "ACCEPT",
+			chain:    forwardChainName,
+			src:      rule.DstIP,
+			dest:     rule.SrcIP,
+			sPorts:   rule.DstPort,
+			protocol: rule.Proto,
+			state:    "RELATED,ESTABLISHED",
+			jump:     "ACCEPT",
 		})
 	}
 
