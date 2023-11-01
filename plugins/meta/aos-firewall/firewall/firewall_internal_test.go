@@ -20,6 +20,7 @@ package firewall
 import (
 	"fmt"
 	"net"
+	"os"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/coreos/go-iptables/iptables"
@@ -32,7 +33,7 @@ import (
  ******************************************************************************/
 
 const (
-	runtimeConfigPath = "/run/firewall_test/aos-firewall-test.conf"
+	runtimeConfigPath = "/tmp/firewall_test/aos-firewall-test.conf"
 )
 
 /*******************************************************************************
@@ -52,23 +53,37 @@ func listFilterRules(chain string) (rules []string, err error) {
 	return rules[1:], nil
 }
 
+func clearFilterRules(chain string) (err error) {
+	ipt, err := iptables.New()
+	if err != nil {
+		return err
+	}
+
+	return ipt.ClearChain("filter", chain)
+}
+
 var _ = Describe("Firewall", func() {
 	var err error
 	var fw *Firewall
-
-	var iconf1 current.IPConfig
-	var iconf2 current.IPConfig
-	var chain1 *AccessChain
-	var chain2 *AccessChain
 
 	interfaceInfoByIP = mockInterfaceInfoByIP
 
 	BeforeEach(func() {
 		fw, err = New(runtimeConfigPath)
 		Expect(err).NotTo(HaveOccurred())
+	})
 
-		iconf1 = current.IPConfig{}
-		iconf2 = current.IPConfig{}
+	AfterEach(func() {
+		err := os.RemoveAll(runtimeConfigPath)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = clearFilterRules(forwardChainName)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("Test Iptables Rules", func() {
+		iconf1 := current.IPConfig{}
+		iconf2 := current.IPConfig{}
 
 		iconf1.Address.IP = net.IPv4(10, 0, 0, 2)
 		iconf1.Gateway = net.IPv4(10, 0, 0, 1)
@@ -78,10 +93,18 @@ var _ = Describe("Firewall", func() {
 		iconf2.Gateway = net.IPv4(20, 0, 0, 1)
 		iconf2.Address.Mask = net.IPv4Mask(0xff, 0xff, 0, 0)
 
-		chain1 = NewAccessChain("AOS_TEST_SERVICE1", "0000-0000-0000-0000", iconf1.Address, iconf1.Gateway, true)
-		chain1.AddInRule("1001:1002,1005", "tcp")
-		chain1.AddInRule("1006", "tcp")
-		chain1.AddInRule("1000:1010", "udp")
+		chain1 := NewAccessChain("AOS_TEST_SERVICE1", "0000-0000-0000-0000", iconf1.Address, iconf1.Gateway, true)
+		chain2 := NewAccessChain("AOS_TEST_SERVICE2", "1111-1111-1111-1111", iconf2.Address, iconf2.Gateway, true)
+
+		err = chain1.AddInRule("1001:1002,1005", "tcp")
+		Expect(err).NotTo(HaveOccurred())
+		err = chain1.AddInRule("1000:1010", "udp")
+		Expect(err).NotTo(HaveOccurred())
+
+		err = chain2.AddInRule("2000:2002,2004", "tcp")
+		Expect(err).NotTo(HaveOccurred())
+		err = chain2.AddInRule("6000", "udp")
+		Expect(err).NotTo(HaveOccurred())
 
 		chain1.OutRules = append(chain1.OutRules, AccessRule{
 			DstIP:   "20.0.0.2",
@@ -99,15 +122,10 @@ var _ = Describe("Firewall", func() {
 
 		chain1.OutRules = append(chain1.OutRules, AccessRule{
 			DstIP:   "20.0.0.2",
-			DstPort: "2002",
+			DstPort: "6000",
 			SrcIP:   "10.0.0.2",
 			Proto:   "udp",
 		})
-
-		chain2 = NewAccessChain("AOS_TEST_SERVICE2", "1111-1111-1111-1111", iconf2.Address, iconf2.Gateway, true)
-		chain2.AddInRule("2000:2002,2004", "tcp")
-		chain2.AddInRule("2005", "tcp")
-		chain2.AddInRule("6000", "udp")
 
 		chain2.OutRules = append(chain2.OutRules, AccessRule{
 			DstIP:   "10.0.0.2",
@@ -122,56 +140,120 @@ var _ = Describe("Firewall", func() {
 			SrcIP:   "20.0.0.2",
 			Proto:   "udp",
 		})
-	})
 
-	It("Add One Way connection", func() {
-		chain1 = NewAccessChain("AOS_TEST_SERVICE1", "0000-0000-0000-0000", iconf1.Address, iconf1.Gateway, true)
-		chain1.OutRules = append(chain1.OutRules, AccessRule{
-			DstIP:   "20.0.0.2",
-			DstPort: "9000",
-			SrcIP:   "10.0.0.2",
-			Proto:   "tcp",
-		})
-
-		chain2 = NewAccessChain("AOS_TEST_SERVICE2", "1111-1111-1111-1111", iconf2.Address, iconf2.Gateway, true)
-		chain2.AddInRule("9000", "tcp")
-
-		err = fw.Add(chain2)
+		err = fw.Add(chain1)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = fw.Check(chain1)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = fw.Add(chain1)
+		err = fw.Add(chain2)
 		Expect(err).NotTo(HaveOccurred())
 
-		rulesContainerChain, err := listFilterRules(chain2.Name)
+		err = fw.Check(chain2)
+		Expect(err).NotTo(HaveOccurred())
+
+		rulesContainerChain1, err := listFilterRules(chain1.Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		rulesContainerChain2, err := listFilterRules(chain2.Name)
 		Expect(err).NotTo(HaveOccurred())
 
 		rulesForward, err := listFilterRules(forwardChainName)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(rulesContainerChain).To(Equal([]string{
+		Expect(rulesContainerChain1).To(Equal([]string{
+			fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain1.Name),
+			fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
+			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp -m multiport --dports 1001:1002,1005 -j RETURN", chain1.Name),
+			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN", chain1.Name),
+			fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain1.Name),
+			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
+		}))
+
+		Expect(rulesContainerChain2).To(Equal([]string{
 			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain2.Name),
 			fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
-			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp --dport 9000 -j RETURN", chain2.Name),
+			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp -m multiport --dports 2000:2002,2004 -j RETURN", chain2.Name),
+			fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN", chain2.Name),
 			fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain2.Name),
 			fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
 		}))
 
 		Expect(rulesForward).To(Equal([]string{
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 9000 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
+			// chan1
 			fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
 			fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2001 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --sport 2001"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2002 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --sport 2002"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p udp -m udp --dport 6000 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --sport 6000"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
 			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 10.0.0.0/16 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
+			// chan2
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --sport 1002"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p udp -m udp --sport 1003"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.0/16 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
 		}))
+
+		err = fw.Del(chain1.ContainerID)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = fw.Check(chain1)
+		Expect(err).To(HaveOccurred())
+
+		_, err = listFilterRules(chain1.Name)
+		Expect(err).To(HaveOccurred())
+
+		rulesForward, err = listFilterRules(forwardChainName)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(rulesForward).To(Equal([]string{
+			// chan2
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --sport 1002"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
+			fmt.Sprintf(
+				"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p udp -m udp --sport 1003"+
+					" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 20.0.0.0/16 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
+		}))
+
+		err = fw.Del(chain2.ContainerID)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = fw.Check(chain1)
+		Expect(err).To(HaveOccurred())
+
+		_, err = listFilterRules(chain2.Name)
+		Expect(err).To(HaveOccurred())
+
+		rulesForward, err = listFilterRules(forwardChainName)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(rulesForward).To(Equal([]string{}))
 	})
 
 	It("No exposed ports were provided", func() {
@@ -190,16 +272,13 @@ var _ = Describe("Firewall", func() {
 		err = fw.Check(chain3)
 		Expect(err).NotTo(HaveOccurred())
 
-		rulesContainerChain, err := listFilterRules(chain3.Name)
+		rulesContainerChain3, err := listFilterRules(chain3.Name)
 		Expect(err).NotTo(HaveOccurred())
 
 		rulesForward, err := listFilterRules(forwardChainName)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = fw.Del(chain3.ContainerID)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(rulesContainerChain).To(Equal([]string{
+		Expect(rulesContainerChain3).To(Equal([]string{
 			fmt.Sprintf("-A %s -s 30.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain3.Name),
 			fmt.Sprintf("-A %s -s 30.0.0.0/16 -p udp -m udp -j ACCEPT", chain3.Name),
 			fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain3.Name),
@@ -207,205 +286,22 @@ var _ = Describe("Firewall", func() {
 		}))
 
 		Expect(rulesForward).To(Equal([]string{
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 9000 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
-			fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
 			fmt.Sprintf("-A %s -s 30.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
 			fmt.Sprintf("-A %s -d 30.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
 			fmt.Sprintf("-A %s -s 30.0.0.2/32 -d 30.0.0.0/16 -j ACCEPT", forwardChainName),
+			fmt.Sprintf("-A %s -s 30.0.0.0/16 -d 30.0.0.2/32 -j ACCEPT", forwardChainName),
 		}))
-	})
 
-	Describe("Test Iptables Rules", func() {
-		It("Add Chain1", func() {
-			err = fw.Add(chain1)
-			Expect(err).NotTo(HaveOccurred())
+		err = fw.Del(chain3.ContainerID)
+		Expect(err).NotTo(HaveOccurred())
 
-			err = fw.Check(chain1)
-			Expect(err).NotTo(HaveOccurred())
+		_, err = listFilterRules(chain3.Name)
+		Expect(err).To(HaveOccurred())
 
-			rulesContainerChain, err := listFilterRules(chain1.Name)
-			Expect(err).NotTo(HaveOccurred())
+		rulesForward, err = listFilterRules(forwardChainName)
+		Expect(err).NotTo(HaveOccurred())
 
-			rulesForward, err := listFilterRules(forwardChainName)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(rulesContainerChain).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain1.Name),
-				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp -m multiport --dports 1001:1002,1005,1006 -j RETURN", chain1.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN", chain1.Name),
-				fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain1.Name),
-				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
-			}))
-
-			Expect(rulesForward).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 9000 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2001 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p udp -m udp --dport 2002 -j ACCEPT", forwardChainName),
-			}))
-		})
-
-		It("Add Chain2", func() {
-			err = fw.Add(chain2)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = fw.Check(chain2)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesContainerChain, err := listFilterRules(chain2.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesForward, err := listFilterRules(forwardChainName)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(rulesContainerChain).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain2.Name),
-				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp -m multiport --dports 2000:2002,2004,2005 -j RETURN", chain2.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN", chain2.Name),
-				fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain2.Name),
-				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
-			}))
-
-			Expect(rulesForward).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 9000 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2001 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p udp -m udp --dport 2002 -j ACCEPT", forwardChainName),
-			}))
-
-			rulesContainerChain, err = listFilterRules(chain1.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = fw.Check(chain1)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesForward, err = listFilterRules(forwardChainName)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(rulesContainerChain).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain1.Name),
-				fmt.Sprintf("-A %s -s 10.0.0.0/16 -p udp -m udp -j ACCEPT", chain1.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp -m multiport --dports 1001:1002,1005,1006 -j RETURN", chain1.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp -m multiport --dports 1000:1010 -j RETURN", chain1.Name),
-				fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain1.Name),
-				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain1.Name),
-			}))
-
-			Expect(rulesForward).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 9000 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 10.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 10.0.0.2/32 -d 10.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2001 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 2002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p udp -m udp --dport 2002 -j ACCEPT", forwardChainName),
-			}))
-		})
-
-		It("Delete Chain1", func() {
-			err = fw.Del(chain1.ContainerID)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesContainerChain, err := listFilterRules(chain1.Name)
-			Expect(rulesContainerChain).To(Equal([]string{}))
-
-			err = fw.Check(chain1)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesContainerChain, err = listFilterRules(chain2.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesForward, err := listFilterRules(forwardChainName)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(rulesContainerChain).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p tcp -m tcp -j ACCEPT", chain2.Name),
-				fmt.Sprintf("-A %s -s 20.0.0.0/16 -p udp -m udp -j ACCEPT", chain2.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p tcp -m tcp -m multiport --dports 2000:2002,2004,2005 -j RETURN", chain2.Name),
-				fmt.Sprintf("-A %s -s 0.0.0.0/16 -p udp -m udp --dport 6000 -j RETURN", chain2.Name),
-				fmt.Sprintf("-A %s -p tcp -m tcp -j DROP", chain2.Name),
-				fmt.Sprintf("-A %s -p udp -m udp -j DROP", chain2.Name),
-			}))
-
-			Expect(rulesForward).To(Equal([]string{
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -o wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -d 20.0.0.2/32 -i wan -j ACCEPT", forwardChainName),
-				fmt.Sprintf("-A %s -s 20.0.0.2/32 -d 20.0.0.0/16 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -p tcp -m tcp --dport 9000 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p tcp -m tcp --dport 1002 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 10.0.0.2/32 -d 20.0.0.2/32 -j ACCEPT", forwardChainName),
-				fmt.Sprintf(
-					"-A %s -s 20.0.0.2/32 -d 10.0.0.2/32 -p udp -m udp --dport 1003 -j ACCEPT", forwardChainName),
-			}))
-
-			err = fw.Del(chain2.ContainerID)
-			Expect(err).NotTo(HaveOccurred())
-
-			rulesContainerChain, err = listFilterRules(chain2.Name)
-			Expect(rulesContainerChain).To(Equal([]string{}))
-
-			err = fw.Check(chain1)
-			Expect(err).NotTo(HaveOccurred())
-		})
+		Expect(rulesForward).To(Equal([]string{}))
 	})
 })
 
