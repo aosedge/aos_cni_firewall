@@ -678,18 +678,27 @@ func (f *Firewall) execute(r *iptablesRequest) (err error) {
 		return fmt.Errorf("failed formant rule for chain %s", err)
 	}
 
+	exists, err := f.iptables.Exists("filter", r.chain, params...)
+	if err != nil {
+		return fmt.Errorf("failed to check if rule exists %s", err)
+	}
+
 	switch r.action {
 	case tableAppend:
-		if err = f.iptables.AppendUnique("filter", r.chain, params...); err != nil {
-			return fmt.Errorf("failed to append rule to chain %s", err)
+		if !exists {
+			if err = f.iptables.AppendUnique("filter", r.chain, params...); err != nil {
+				return fmt.Errorf("failed to append rule to chain %s", err)
+			}
 		}
 	case tableDelete:
-		if err = f.iptables.Delete("filter", r.chain, params...); err != nil {
-			return fmt.Errorf("failed to delete rule from chain %s", err)
+		if exists {
+			if err = f.iptables.Delete("filter", r.chain, params...); err != nil {
+				return fmt.Errorf("failed to delete rule from chain %s", err)
+			}
 		}
+
 	case tableInsert:
-		exists, err := f.iptables.Exists("filter", r.chain, params...)
-		if !exists && err == nil {
+		if !exists {
 			if err = f.iptables.Insert("filter", r.chain, 1, params...); err != nil {
 				return fmt.Errorf("failed to insert rule to chain %s", err)
 			}
