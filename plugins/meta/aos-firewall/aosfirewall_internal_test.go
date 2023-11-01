@@ -56,13 +56,6 @@ const fullConf = `
 	   "protocol": "tcp"
 	 }
    ],
-   "outputAccess": [
-	 {
-	   "uuid": "bbbb-bbbb",
-	   "port": "257",
-	   "protocol": "tcp"
-	 }
-   ],
    "cniVersion": "0.4.0",
    "ifName": "vethbdcda373",
    "prevResult": {
@@ -86,8 +79,8 @@ const fullConf = `
 	   {
 		 "version": "4",
 		 "interface": 2,
-		 "address": "1.1.0.2/16",
-		 "gateway": "1.1.0.1"
+		 "address": "11.1.0.2/16",
+		 "gateway": "11.1.0.1"
 	   }
 	 ],
 	 "routes": [
@@ -97,7 +90,7 @@ const fullConf = `
 	 ],
 	 "dns": {
 	   "nameservers": [
-		 "1.1.0.1"
+		 "11.1.0.1"
 	   ]
 	 }
    }
@@ -220,11 +213,16 @@ var _ = Describe("Aos Firewall", func() {
 		}
 
 		err = originalNS.Do(func(ns.NetNS) (err error) {
+			br1 = testBridge{name: "bbr1", ipnet: "11.1.0.1/16"}
+
+			br1.bridge, err = createBridge(br1.name, br1.ipnet, 1500, false, false)
+			Expect(err).NotTo(HaveOccurred())
+
 			defer GinkgoRecover()
 			_, _, err = testutils.CmdAdd(targetNS.Path(), args.ContainerID, IFNAME, []byte(fullConf), func() (err error) {
 				return cmdAdd(args)
 			})
-			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred())
 
 			err = testutils.CmdCheck(targetNS.Path(), args.ContainerID, IFNAME, []byte(fullConf), func() (err error) {
 				return cmdCheck(args)
@@ -235,6 +233,8 @@ var _ = Describe("Aos Firewall", func() {
 				return cmdDel(args)
 			})
 			Expect(err).NotTo(HaveOccurred())
+
+			Expect(removeBridge(br1.bridge)).To(Succeed())
 
 			return nil
 		})
@@ -463,37 +463,36 @@ var _ = Describe("Aos Firewall", func() {
 				{Proto: "tcp", DstPort: "300", SrcIP: "22.2.0.10", DstIP: "11.1.0.12"},
 			}
 
-			err = buildContainer(&cont11)
+			err = buildContainerNetwork(&cont11)
 			Expect(err).NotTo(HaveOccurred())
-			err = buildContainer(&cont12)
+			err = buildContainerNetwork(&cont12)
 			Expect(err).NotTo(HaveOccurred())
-			err = buildContainer(&cont2)
-			Expect(err).NotTo(HaveOccurred())
-
-			cont11.args, err = doAddContainer(cont11, cont2.uuid)
+			err = buildContainerNetwork(&cont2)
 			Expect(err).NotTo(HaveOccurred())
 
-			cont12.args, err = doAddContainer(cont12, cont2.uuid)
+			cont11.args, err = doAddFirewallContainer(cont11)
 			Expect(err).NotTo(HaveOccurred())
 
-			cont2.args, err = doAddContainer(cont2, cont11.uuid)
+			cont12.args, err = doAddFirewallContainer(cont12)
 			Expect(err).NotTo(HaveOccurred())
 
+			cont2.args, err = doAddFirewallContainer(cont2)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		AfterEach(func() {
-			err = doDelContainer(cont11.args)
+			err = doDelFirewallContainer(cont11.args, &cont11)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = doDelContainer(cont12.args)
+			err = doDelFirewallContainer(cont12.args, &cont12)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = doDelContainer(cont2.args)
+			err = doDelFirewallContainer(cont2.args, &cont2)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(clearContainer(&cont11)).To(Succeed())
-			Expect(clearContainer(&cont12)).To(Succeed())
-			Expect(clearContainer(&cont2)).To(Succeed())
+			Expect(clearContainerNetwork(&cont11)).To(Succeed())
+			Expect(clearContainerNetwork(&cont12)).To(Succeed())
+			Expect(clearContainerNetwork(&cont2)).To(Succeed())
 
 			Expect(removeBridge(br1.bridge)).To(Succeed())
 			Expect(removeBridge(br2.bridge)).To(Succeed())
@@ -509,7 +508,7 @@ var _ = Describe("Aos Firewall", func() {
 			contIP2, _, err := net.ParseCIDR(cont2.ipnet)
 			Expect(err).NotTo(HaveOccurred())
 
-			//send traffic from 11 to 2
+			// send traffic from 11 to 2
 			err = cont11.ns.Do(func(hostNs ns.NetNS) (err error) {
 				defer GinkgoRecover()
 
@@ -537,12 +536,17 @@ var _ = Describe("Aos Firewall", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			//send traffic from 2 to 11
+			// send traffic from 2 to 11
 			err = cont2.ns.Do(func(hostNs ns.NetNS) (err error) {
 				defer GinkgoRecover()
 
 				By("trace container 11 port 202 tcp")
 				if err = traceroute(contIP11.String(), "202", "202", "tcp"); err != nil {
+					return err
+				}
+
+				By("trace container 12 port 300 tcp")
+				if err = traceroute(contIP12.String(), "300", "300", "tcp"); err != nil {
 					return err
 				}
 
@@ -560,7 +564,7 @@ var _ = Describe("Aos Firewall", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			//Check internet connection for container 11
+			// Check internet connection for container 11
 			err = cont11.ns.Do(func(hostNs ns.NetNS) (err error) {
 				defer GinkgoRecover()
 
@@ -568,7 +572,7 @@ var _ = Describe("Aos Firewall", func() {
 			})
 			Expect(err).To(HaveOccurred())
 
-			//Check internet connection for container 2
+			// Check internet connection for container 2
 			err = cont2.ns.Do(func(hostNs ns.NetNS) (err error) {
 				defer GinkgoRecover()
 
@@ -602,27 +606,36 @@ var _ = Describe("Aos Firewall", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Delete cont12")
-			err = doDelContainer(cont12.args)
+			err = doDelFirewallContainer(cont12.args, &cont12)
 			Expect(err).NotTo(HaveOccurred())
+
+			Expect(clearContainerNetwork(&cont12)).To(Succeed())
 
 			By("Check connections Container11 to Container12 and Container2")
 			err = doCheckTraffic(&cont11, contIP2.String())
 			Expect(err).NotTo(HaveOccurred())
 
-			err = doCheckTraffic(&cont11, contIP12.String())
-			Expect(err).To(HaveOccurred())
-
 			By("Check connections Container2 to Container12 and Container11")
 			err = doCheckTraffic(&cont2, contIP11.String())
 			Expect(err).NotTo(HaveOccurred())
 
+			err = doCheckTraffic(&cont2, contIP12.String())
+			Expect(err).To(HaveOccurred())
+
 			By("Add cont12")
-			cont12.args, err = doAddContainer(cont12, cont2.uuid)
+
+			err = buildContainerNetwork(&cont12)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Check conections to Container12 and Container2")
+			cont12.args, err = doAddFirewallContainer(cont12)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Check connections to Container12 and Container2")
 			err = doCheckTraffic(&cont11, contIP2.String())
 			Expect(err).NotTo(HaveOccurred())
+
+			// this check clean up conntrack cache entries
+			_ = doCheckTraffic(&cont11, contIP12.String())
 
 			err = doCheckTraffic(&cont11, contIP12.String())
 			Expect(err).NotTo(HaveOccurred())
@@ -815,7 +828,7 @@ func getInterfaceEntry(name string, netNs *ns.NetNS) (i *current.Interface, err 
 	return i, nil
 }
 
-func buildServiceConfig(containerID string, cont testContainer, outputUUID string) (args *skel.CmdArgs, err error) {
+func buildServiceConfig(containerID string, cont testContainer) (args *skel.CmdArgs, err error) {
 	args = &skel.CmdArgs{
 		ContainerID: containerID,
 		Netns:       cont.ns.Path(),
@@ -831,7 +844,7 @@ func buildServiceConfig(containerID string, cont testContainer, outputUUID strin
 			DNS:        types.DNS{},
 		},
 		InputAccess: []InputAccessEntry{
-			InputAccessEntry{
+			{
 				Port:     "1:1000",
 				Protocol: "tcp",
 			},
@@ -905,7 +918,7 @@ func buildServiceConfig(containerID string, cont testContainer, outputUUID strin
 	return args, nil
 }
 
-func buildContainer(cont *testContainer) (err error) {
+func buildContainerNetwork(cont *testContainer) (err error) {
 	cont.ns, err = testutils.NewNS()
 	if err != nil {
 		return err
@@ -944,7 +957,7 @@ func buildContainer(cont *testContainer) (err error) {
 	return nil
 }
 
-func clearContainer(cont *testContainer) (err error) {
+func clearContainerNetwork(cont *testContainer) (err error) {
 	if err = removeLink(cont.vethOut); err != nil {
 		return err
 	}
@@ -964,8 +977,8 @@ func clearContainer(cont *testContainer) (err error) {
 	return nil
 }
 
-func doAddContainer(cont testContainer, outputUUID string) (args *skel.CmdArgs, err error) {
-	args, err = buildServiceConfig(cont.name, cont, outputUUID)
+func doAddFirewallContainer(cont testContainer) (args *skel.CmdArgs, err error) {
+	args, err = buildServiceConfig(cont.name, cont)
 	if err != nil {
 		return nil, err
 	}
@@ -977,7 +990,7 @@ func doAddContainer(cont testContainer, outputUUID string) (args *skel.CmdArgs, 
 	return args, err
 }
 
-func doDelContainer(args *skel.CmdArgs) (err error) {
+func doDelFirewallContainer(args *skel.CmdArgs, cont *testContainer) (err error) {
 	return testutils.CmdDel(args.Netns, args.ContainerID, args.IfName, func() (err error) {
 		return cmdDel(args)
 	})
