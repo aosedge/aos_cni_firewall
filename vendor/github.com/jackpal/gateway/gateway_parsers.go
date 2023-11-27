@@ -1,5 +1,9 @@
 package gateway
 
+// References
+// * https://superuser.com/questions/622144/what-does-netstat-r-on-osx-tell-you-about-gateways
+// * https://man.freebsd.org/cgi/man.cgi?query=netstat&sektion=1
+
 import (
 	"bufio"
 	"bytes"
@@ -11,26 +15,91 @@ import (
 	"strings"
 )
 
+const (
+	ns_destination = "Destination"
+	ns_flags       = "Flags"
+	ns_netif       = "Netif"
+	ns_gateway     = "Gateway"
+	ns_interface   = "Interface"
+)
+
+type netstatFields map[string]int
+
 type windowsRouteStruct struct {
-	Destination string
-	Netmask     string
-	Gateway     string
-	Interface   string
-	Metric      string
+	// Dotted IP address
+	Gateway string
+
+	// Dotted IP address
+	Interface string
 }
 
 type linuxRouteStruct struct {
-	Iface       string
-	Destination string
-	Gateway     string
-	Flags       string
-	RefCnt      string
-	Use         string
-	Metric      string
-	Mask        string
-	MTU         string
-	Window      string
-	IRTT        string
+	// Name of interface
+	Iface string
+
+	// big-endian hex string
+	Gateway string
+}
+
+type unixRouteStruct struct {
+	// Name of interface
+	Iface string
+
+	// Dotted IP address
+	Gateway string
+}
+
+func fieldNum(name string, fields []string) int {
+	// Return the zero-based index of given field in slice of field names
+	for num, field := range fields {
+		if name == field {
+			return num
+		}
+	}
+
+	return -1
+}
+
+func discoverFields(output []byte) (int, netstatFields) {
+	// Discover positions of fields of interest in netstat output
+	nf := make(netstatFields, 4)
+
+	outputLines := strings.Split(string(output), "\n")
+	for lineNo, line := range outputLines {
+		fields := strings.Fields(line)
+
+		if len(fields) > 3 {
+			d, f, g, netif, iface := fieldNum(ns_destination, fields), fieldNum(ns_flags, fields), fieldNum(ns_gateway, fields), fieldNum(ns_netif, fields), fieldNum(ns_interface, fields)
+			if d >= 0 && f >= 0 && g >= 0 && (netif >= 0 || iface >= 0) {
+				nf[ns_destination] = d
+				nf[ns_flags] = f
+				nf[ns_gateway] = g
+				if iface > 0 {
+					// NetBSD
+					nf[ns_netif] = iface
+				} else {
+					// Other BSD/Solaris/Darwin
+					nf[ns_netif] = netif
+				}
+
+				return lineNo, nf
+			}
+		}
+	}
+
+	// Unable to parse column headers
+	return -1, nil
+}
+
+func flagsContain(flags string, flag ...string) bool {
+	// Check route table flags field for existence of specific flags
+	contain := true
+
+	for _, f := range flag {
+		contain = contain && strings.Contains(flags, f)
+	}
+
+	return contain
 }
 
 func parseToWindowsRouteStruct(output []byte) (windowsRouteStruct, error) {
@@ -66,11 +135,8 @@ func parseToWindowsRouteStruct(output []byte) (windowsRouteStruct, error) {
 			}
 
 			return windowsRouteStruct{
-				Destination: fields[0],
-				Netmask:     fields[1],
-				Gateway:     fields[2],
-				Interface:   fields[3],
-				Metric:      fields[4],
+				Gateway:   fields[2],
+				Interface: fields[3],
 			}, nil
 		}
 		if strings.HasPrefix(line, "=======") {
@@ -97,6 +163,7 @@ func parseToLinuxRouteStruct(output []byte) (linuxRouteStruct, error) {
 		sep              = "\t" // field separator
 		destinationField = 1    // field containing hex destination address
 		gatewayField     = 2    // field containing hex gateway address
+		maskField        = 7    // field containing hex mask
 	)
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 
@@ -109,38 +176,17 @@ func parseToLinuxRouteStruct(output []byte) (linuxRouteStruct, error) {
 		row := scanner.Text()
 		tokens := strings.Split(row, sep)
 		if len(tokens) < 11 {
-			return linuxRouteStruct{}, fmt.Errorf("invalid row '%s' in route file: doesn't have 11 fields", row)
+			return linuxRouteStruct{}, fmt.Errorf("invalid row %q in route file: doesn't have 11 fields", row)
 		}
 
-		// Cast hex destination address to int
-		destinationHex := "0x" + tokens[destinationField]
-		destination, err := strconv.ParseInt(destinationHex, 0, 64)
-		if err != nil {
-			return linuxRouteStruct{}, fmt.Errorf(
-				"parsing destination field hex '%s' in row '%s': %w",
-				destinationHex,
-				row,
-				err,
-			)
-		}
-
-		// The default interface is the one that's 0
-		if destination != 0 {
+		// The default interface is the one that's 0 for both destination and mask.
+		if !(tokens[destinationField] == "00000000" && tokens[maskField] == "00000000") {
 			continue
 		}
 
 		return linuxRouteStruct{
-			Iface:       tokens[0],
-			Destination: tokens[1],
-			Gateway:     tokens[2],
-			Flags:       tokens[3],
-			RefCnt:      tokens[4],
-			Use:         tokens[5],
-			Metric:      tokens[6],
-			Mask:        tokens[7],
-			MTU:         tokens[8],
-			Window:      tokens[9],
-			IRTT:        tokens[10],
+			Iface:   tokens[0],
+			Gateway: tokens[2],
 		}, nil
 	}
 	return linuxRouteStruct{}, errors.New("interface with default destination not found")
@@ -173,105 +219,131 @@ func parseWindowsInterfaceIP(output []byte) (net.IP, error) {
 }
 
 func parseLinuxGatewayIP(output []byte) (net.IP, error) {
-
 	parsedStruct, err := parseToLinuxRouteStruct(output)
 	if err != nil {
 		return nil, err
 	}
 
-	destinationHex := "0x" + parsedStruct.Destination
-	gatewayHex := "0x" + parsedStruct.Gateway
-
 	// cast hex address to uint32
-	d, err := strconv.ParseInt(gatewayHex, 0, 64)
+	d, err := strconv.ParseUint(parsedStruct.Gateway, 16, 32)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"parsing default interface address field hex '%s': %w",
-			destinationHex,
+			"parsing default interface address field hex %q: %w",
+			parsedStruct.Gateway,
 			err,
 		)
 	}
 	// make net.IP address from uint32
 	ipd32 := make(net.IP, 4)
 	binary.LittleEndian.PutUint32(ipd32, uint32(d))
-
-	// format net.IP to dotted ipV4 string
-	return net.IP(ipd32), nil
+	return ipd32, nil
 }
 
 func parseLinuxInterfaceIP(output []byte) (net.IP, error) {
+	// Return the first IPv4 address we encounter.
+	return parseLinuxInterfaceIPImpl(output, &intefaceGetterImpl{})
+}
+
+func parseLinuxInterfaceIPImpl(output []byte, ifaceGetter interfaceGetter) (net.IP, error) {
+	// Mockable implemenation
 	parsedStruct, err := parseToLinuxRouteStruct(output)
 	if err != nil {
 		return nil, err
 	}
 
-	iface, err := net.InterfaceByName(parsedStruct.Iface)
+	return getInterfaceIP4(parsedStruct.Iface, ifaceGetter)
+}
+
+func parseUnixInterfaceIP(output []byte) (net.IP, error) {
+	// Return the first IPv4 address we encounter.
+	return parseUnixInterfaceIPImpl(output, &intefaceGetterImpl{})
+}
+
+func parseUnixInterfaceIPImpl(output []byte, ifaceGetter interfaceGetter) (net.IP, error) {
+	// Mockable implemenation
+	parsedStruct, err := parseNetstatToRouteStruct(output)
 	if err != nil {
 		return nil, err
 	}
 
-	addrs, err := iface.Addrs()
+	return getInterfaceIP4(parsedStruct.Iface, ifaceGetter)
+}
+
+func getInterfaceIP4(name string, ifaceGetter interfaceGetter) (net.IP, error) {
+	// Given interface name and an interface to "net" package
+	// lookup ip4 for the given interface
+	iface, err := ifaceGetter.InterfaceByName(name)
 	if err != nil {
 		return nil, err
 	}
 
-	// split when its 192.168.8.8/24
-	ipString := strings.Split(addrs[0].String(), "/")[0]
-	ip := net.ParseIP(ipString)
+	addrs, err := ifaceGetter.Addrs(iface)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, addr := range addrs {
+		ipnet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+
+		ip := ipnet.IP.To4()
+		if ip != nil {
+			return ip, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no IPv4 address found for interface %v",
+		name)
+}
+
+func parseUnixGatewayIP(output []byte) (net.IP, error) {
+	// Extract default gateway IP from netstat route table
+	parsedStruct, err := parseNetstatToRouteStruct(output)
+	if err != nil {
+		return nil, err
+	}
+
+	ip := net.ParseIP(parsedStruct.Gateway)
 	if ip == nil {
-		return nil, fmt.Errorf("invalid addr %s", ipString)
+		return nil, errCantParse
 	}
+
 	return ip, nil
 }
 
-func parseDarwinRouteGet(output []byte) (net.IP, error) {
-	// Darwin route out format is always like this:
-	//    route to: default
-	// destination: default
-	//        mask: default
-	//     gateway: 192.168.1.1
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "gateway:" {
-			ip := net.ParseIP(fields[1])
-			if ip != nil {
-				return ip, nil
-			}
-		}
+// Parse any netstat -rn output
+func parseNetstatToRouteStruct(output []byte) (unixRouteStruct, error) {
+	startLine, nsFields := discoverFields(output)
+
+	if startLine == -1 {
+		// Unable to find required column headers in netstat output
+		return unixRouteStruct{}, errBadNetstat
 	}
 
-	return nil, errNoGateway
-}
-
-func parseBSDSolarisNetstat(output []byte) (net.IP, error) {
-	// netstat -rn produces the following on FreeBSD:
-	// Routing tables
-	//
-	// Internet:
-	// Destination        Gateway            Flags      Netif Expire
-	// default            10.88.88.2         UGS         em0
-	// 10.88.88.0/24      link#1             U           em0
-	// 10.88.88.148       link#1             UHS         lo0
-	// 127.0.0.1          link#2             UH          lo0
-	//
-	// Internet6:
-	// Destination                       Gateway                       Flags      Netif Expire
-	// ::/96                             ::1                           UGRS        lo0
-	// ::1                               link#2                        UH          lo0
-	// ::ffff:0.0.0.0/96                 ::1                           UGRS        lo0
-	// fe80::/10                         ::1                           UGRS        lo0
-	// ...
 	outputLines := strings.Split(string(output), "\n")
-	for _, line := range outputLines {
+
+	for lineNo, line := range outputLines {
+		if lineNo <= startLine || strings.Contains(line, "-----") {
+			// Skip until past column headers and heading underlines (solaris)
+			continue
+		}
+
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "default" {
-			ip := net.ParseIP(fields[1])
-			if ip != nil {
-				return ip, nil
-			}
+
+		if len(fields) < 4 {
+			// past route entries (got to end or blank line prior to ip6 entries)
+			break
+		}
+
+		if fields[nsFields[ns_destination]] == "default" && flagsContain(fields[nsFields[ns_flags]], "U", "G") {
+			return unixRouteStruct{
+				Iface:   fields[nsFields[ns_netif]],
+				Gateway: fields[nsFields[ns_gateway]],
+			}, nil
 		}
 	}
 
-	return nil, errNoGateway
+	return unixRouteStruct{}, errNoGateway
 }
