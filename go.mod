@@ -1,4 +1,4 @@
-module github.com/aoscloud/aos_cni_firewall
+module github.com/aosedge/aos_cni_firewall
 
 go 1.21
 

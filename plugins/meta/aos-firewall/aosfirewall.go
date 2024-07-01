@@ -27,7 +27,7 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 
-	"github.com/aoscloud/aos_cni_firewall/plugins/meta/aos-firewall/firewall"
+	"github.com/aosedge/aos_cni_firewall/plugins/meta/aos-firewall/firewall"
 )
 
 /*******************************************************************************
