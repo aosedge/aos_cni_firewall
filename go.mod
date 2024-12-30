@@ -1,6 +1,6 @@
 module github.com/aosedge/aos_cni_firewall
 
-go 1.21
+go 1.22.0
 
 require (
 	github.com/containernetworking/cni v1.1.2
